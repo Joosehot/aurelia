@@ -1,0 +1,470 @@
+{
+ "id": "A42-spiral-e000-d000",
+ "provenance": {
+  "run_seed": 42,
+  "stir": "spiral",
+  "episode": 0,
+  "episode_seed": 4200126,
+  "index": 0,
+  "step": 10,
+  "bowl": {
+   "n": 2000,
+   "hidden_dim": 12,
+   "radius": 1.0,
+   "packing": 0.78,
+   "k_n": 200.0,
+   "c_n": 2.0,
+   "mu": 0.5,
+   "gamma_t": 5.0,
+   "drag": 0.1,
+   "dt": 0.01,
+   "spoon_radius": 5.0,
+   "spoon_k": 400.0,
+   "stir_speed": 1.0,
+   "heat_tau": 1.0,
+   "pair_tau": 2.0,
+   "heat_threshold": 15.0,
+   "cluster_heat": 80.0,
+   "pair_min": 2.0,
+   "pair_rel": 0.3,
+   "k_min": 4,
+   "k_max": 12,
+   "check_every": 10,
+   "neighbours": 20,
+   "skin": 1.0,
+   "max_per_check": 2
+  }
+ },
+ "record": {
+  "nodes": [
+   1109,
+   1062,
+   1063,
+   1110,
+   1064
+  ],
+  "hidden": [
+   [
+    0.8093342185020447,
+    1.714239478111267,
+    2.0393946170806885,
+    -0.8762885928153992,
+    0.7770074009895325,
+    0.5410454869270325,
+    0.7927013635635376,
+    0.7854886651039124,
+    -1.2925318479537964,
+    0.23510397970676422,
+    0.699042797088623,
+    0.423405259847641
+   ],
+   [
+    -1.1115256547927856,
+    -1.288104772567749,
+    -0.9344123601913452,
+    -0.5947192907333374,
+    -0.12444496154785156,
+    0.5984097123146057,
+    -1.7943012714385986,
+    0.723199188709259,
+    -1.254289984703064,
+    1.3639229536056519,
+    -2.024146318435669,
+    -0.24070145189762115
+   ],
+   [
+    0.3474472463130951,
+    -0.13668258488178253,
+    0.9705104827880859,
+    -0.26618969440460205,
+    1.5538254976272583,
+    1.7138034105300903,
+    1.1410971879959106,
+    2.087031364440918,
+    0.6996363997459412,
+    -1.2221801280975342,
+    -1.383620023727417,
+    -1.0463050603866577
+   ],
+   [
+    -1.1553354263305664,
+    -1.2738679647445679,
+    -1.188175916671753,
+    -0.027379918843507767,
+    2.220980405807495,
+    0.2895580232143402,
+    -0.02705409564077854,
+    1.2073320150375366,
+    -0.33505725860595703,
+    0.4831904470920563,
+    0.3710571527481079,
+    0.4183043837547302
+   ],
+   [
+    -0.10538309812545776,
+    0.6900218725204468,
+    -0.3741133213043213,
+    -0.03471154347062111,
+    -0.1797955334186554,
+    0.021793078631162643,
+    0.34653493762016296,
+    -0.563023567199707,
+    -0.5122993588447571,
+    -0.39657580852508545,
+    0.7458122968673706,
+    -0.7537567019462585
+   ]
+  ],
+  "pair_work": [
+   [
+    0.0,
+    129.17462158203125,
+    0.0,
+    44.139869689941406,
+    0.0
+   ],
+   [
+    129.17462158203125,
+    0.0,
+    60.16024398803711,
+    0.0,
+    0.0
+   ],
+   [
+    0.0,
+    60.16024398803711,
+    0.0,
+    62.50315856933594,
+    56.761417388916016
+   ],
+   [
+    44.139869689941406,
+    0.0,
+    62.50315856933594,
+    0.0,
+    0.0
+   ],
+   [
+    0.0,
+    0.0,
+    56.761417388916016,
+    0.0,
+    0.0
+   ]
+  ],
+  "events": [
+   [
+    0,
+    1,
+    0.009999999776482582,
+    129.17462158203125
+   ],
+   [
+    1,
+    2,
+    0.009999999776482582,
+    60.16024398803711
+   ],
+   [
+    0,
+    3,
+    0.019999999552965164,
+    44.139869689941406
+   ],
+   [
+    2,
+    3,
+    0.019999999552965164,
+    62.50315856933594
+   ],
+   [
+    2,
+    4,
+    0.019999999552965164,
+    56.761417388916016
+   ]
+  ],
+  "heat": [
+   98.71360778808594,
+   91.93829345703125,
+   87.25138854980469,
+   55.06418991088867,
+   38.220218658447266
+  ],
+  "peak_force": [
+   495.52093505859375,
+   262.2135009765625,
+   404.32562255859375,
+   235.85691833496094,
+   415.1812744140625
+  ],
+  "stir": {
+   "pattern": "spiral",
+   "speed": 1.0,
+   "time": 0.1,
+   "spoon": [
+    26.384276677139155,
+    0.612496843595222,
+    11.769407389324016,
+    6.247760169985638
+   ],
+   "swirl": 0.500546660373091,
+   "mean_speed": 29.624131159180575,
+   "force_cv": 0.27108461789925903,
+   "centroid": [
+    31.391657638549805,
+    3.5895946502685545
+   ]
+  },
+  "step": 10
+ },
+ "record_hash": "ed918fd39a73396e",
+ "definition": {
+  "form": "aurelia-particle/v1",
+  "k": 5,
+  "A": [
+   [
+    0.0,
+    -0.42190941524026776,
+    0.0,
+    -0.14416939164662776,
+    0.0
+   ],
+   [
+    -0.8428972734046221,
+    0.0,
+    -0.1964950471760108,
+    0.0,
+    -0.0
+   ],
+   [
+    0.0,
+    -0.3925608993765933,
+    0.0,
+    0.20414746147262205,
+    -0.18539381904485192
+   ],
+   [
+    -0.28802388080897123,
+    0.0,
+    0.4078490131578487,
+    0.0,
+    -0.0
+   ],
+   [
+    0.0,
+    -0.0,
+    -0.3703826910095963,
+    -0.0,
+    0.0
+   ]
+  ],
+  "tau": [
+   0.647345599642632,
+   0.1874192327035768,
+   0.47203750305413805,
+   0.1734722885743773,
+   0.40540290068186097
+  ],
+  "bias": [
+   0.23429140757166986,
+   -0.21465734155343713,
+   -0.03395943098656333,
+   -0.2137106325231535,
+   0.14949901290141393
+  ],
+  "gain": [
+   1.4833538363770715,
+   0.6336777707551211,
+   1.3744642643830112,
+   0.5849938540665385,
+   0.821207829239619
+  ],
+  "alpha": 0.9999997231382775,
+  "T": 3,
+  "beta": 0.500546660373091,
+  "rho": 0.8935964551756459,
+  "charge": [
+   [
+    0.5309232978945057,
+    0.3696923013402655,
+    0.5416468641774168,
+    0.5367184817089538
+   ],
+   [
+    -0.0613385599333958,
+    0.2949544083343346,
+    -0.8844058827916834,
+    0.35646277863462394
+   ],
+   [
+    0.46829812604668347,
+    0.5165129075235333,
+    0.34390842188626125,
+    0.6289978369262084
+   ],
+   [
+    0.8728216301668059,
+    0.11379321726070374,
+    -0.010631971267341164,
+    0.47446861519451644
+   ],
+   [
+    -0.2622912845556652,
+    0.03179241708569145,
+    0.5055358840320272,
+    -0.821356192047657
+   ]
+  ],
+  "angle": [
+   -1.4004629146170815,
+   -0.14382585318116425,
+   1.112811208254753,
+   2.36944826969067,
+   3.6260853311265873
+  ],
+  "mass": 5.639846229553223,
+  "radius": 1.4
+ },
+ "definition_hash": "1a02d189945229ba",
+ "scores": {
+  "tasks": {
+   "memcap": {
+    "matter": 0.11687,
+    "seeds": [
+     0.11511,
+     0.11863
+    ],
+    "nobond": 0.11399,
+    "shuffled": 0.10289,
+    "esn": {
+     "mean": 0.99696,
+     "std": 0.0015,
+     "input_scale": 0.3,
+     "spectral_radius": 0.9
+    },
+    "units": 160,
+    "readout_params": 161,
+    "input_scale": 3.0,
+    "chance": 0.0,
+    "verdict": "below",
+    "above_chance": true,
+    "assembly_matters": false
+   },
+   "xor": {
+    "matter": 0.6025,
+    "seeds": [
+     0.6525,
+     0.5525
+    ],
+    "nobond": 0.58625,
+    "shuffled": 0.59875,
+    "esn": {
+     "mean": 0.53417,
+     "std": 0.02003,
+     "input_scale": 3.0,
+     "spectral_radius": 0.5
+    },
+    "units": 160,
+    "readout_params": 161,
+    "input_scale": 3.0,
+    "chance": 0.5,
+    "verdict": "beat",
+    "above_chance": true,
+    "assembly_matters": false
+   },
+   "narma10": {
+    "matter": 0.35421,
+    "seeds": [
+     0.35882,
+     0.34959
+    ],
+    "nobond": 0.31038,
+    "shuffled": 0.31678,
+    "esn": {
+     "mean": 0.83913,
+     "std": 0.00668,
+     "input_scale": 0.3,
+     "spectral_radius": 0.9
+    },
+    "units": 160,
+    "readout_params": 161,
+    "input_scale": 3.0,
+    "chance": 0.0,
+    "verdict": "below",
+    "above_chance": true,
+    "assembly_matters": true
+   },
+   "latch": {
+    "matter": 0.8575,
+    "seeds": [
+     0.8315,
+     0.8835
+    ],
+    "nobond": 0.8525,
+    "shuffled": 0.862,
+    "esn": {
+     "mean": 0.67683,
+     "std": 0.00165,
+     "input_scale": 0.3,
+     "spectral_radius": 0.9
+    },
+    "units": 160,
+    "readout_params": 161,
+    "input_scale": 0.3,
+    "chance": 0.5,
+    "verdict": "beat",
+    "above_chance": true,
+    "assembly_matters": false
+   },
+   "mnist14": {
+    "matter": 0.5585,
+    "seeds": [
+     0.545,
+     0.572
+    ],
+    "nobond": 0.4405,
+    "shuffled": 0.5475,
+    "esn": {
+     "mean": 0.80467,
+     "std": 0.01797,
+     "input_scale": 0.3,
+     "spectral_radius": 0.9
+    },
+    "units": 160,
+    "readout_params": 161,
+    "input_scale": 3.0,
+    "chance": 0.1,
+    "verdict": "below",
+    "above_chance": true,
+    "assembly_matters": true
+   }
+  },
+  "keep": true,
+  "good_at": [
+   "xor",
+   "latch"
+  ],
+  "assembly_matters": [],
+  "score": -3.3177,
+  "assembly": [
+   {
+    "bonds": 14,
+    "bonds_per_particle": 0.875,
+    "molecules": 19,
+    "largest": 4,
+    "free": 13
+   },
+   {
+    "bonds": 12,
+    "bonds_per_particle": 0.75,
+    "molecules": 21,
+    "largest": 5,
+    "free": 15
+   }
+  ]
+ },
+ "created": "2026-11-06 19:02:56",
+ "kind": "inhibitory knot (k=5)",
+ "report": "Particle A42-spiral-e000-d000: inhibitory knot (k=5)\n\nWhat it is: a particle of mass 5.6 and radius 1.40 with 5 ports on its rim. Each port is a stick-slip contact with a dead zone (mean 0.38) and a 4-dim charge; 3 of its port pairs attract each other strongly (so copies can bind port to port). Inside, 10 couplings (80% inhibitory) pass a push from port to port; it settles in 3 sweeps with slip rate 1.00 and keeps its state (memory).\nHow it assembles (32 copies, 2 worlds): 0.81 bonds per particle, largest molecule 4.5 particles, 14.0 left free.\n\nIts matter vs an ESN of the same size (readout only, both with tuned input scale); controls: no bonds, random bonds:\n  memcap   0.117 vs ESN 0.997\u00b10.002  [below]  no bonds 0.114  random bonds 0.103\n  xor      0.603 vs ESN 0.534\u00b10.020  [beat]  no bonds 0.586  random bonds 0.599\n  narma10  0.354 vs ESN 0.839\u00b10.007  [below]  no bonds 0.310  random bonds 0.317\n  latch    0.858 vs ESN 0.677\u00b10.002  [beat]  no bonds 0.853  random bonds 0.862\n  mnist14  0.558 vs ESN 0.805\u00b10.018  [below]  no bonds 0.441  random bonds 0.547\n\nGood at: xor, latch.\nIts assembly does not matter: the particles do as well unbonded, so the useful part is the single particle's own stick-slip memory.\nUse (a guess): combining recent events nonlinearly (temporal feature detection); holding a value until it is overwritten, with nothing trained but the readout: a physical memory element for a recurrent or reservoir system."
+}

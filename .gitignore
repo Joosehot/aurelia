@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+*.pyc
+runs/cache/
+runs/trial_vault/
+runs/run-*/discarded.jsonl

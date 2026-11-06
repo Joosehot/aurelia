@@ -1,0 +1,2 @@
+{"minutes": 0.997, "tested": 32, "kept": 32, "discarded": 0, "assembly_matters": 4, "diamonds_per_min": 32.1, "batch_seconds": 59.8, "sim_steps": 190, "episodes": 1, "best": {"memcap": 0.12209, "xor": 0.6275, "narma10": 0.36617, "latch": 0.97925, "mnist14": 0.6445}}
+{"minutes": 1.507, "tested": 64, "kept": 64, "discarded": 0, "assembly_matters": 11, "diamonds_per_min": 42.5, "batch_seconds": 30.6, "sim_steps": 720, "episodes": 1, "best": {"memcap": 0.1337, "xor": 0.64875, "narma10": 0.44084, "latch": 0.97925, "mnist14": 0.6575}}

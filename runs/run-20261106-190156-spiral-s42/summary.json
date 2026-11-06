@@ -1,0 +1,490 @@
+{
+ "run_id": "run-20261106-190156-spiral-s42",
+ "minutes": 1.51,
+ "stir": "spiral",
+ "seed": 42,
+ "bowl": {
+  "n": 2000,
+  "hidden_dim": 12,
+  "radius": 1.0,
+  "packing": 0.78,
+  "k_n": 200.0,
+  "c_n": 2.0,
+  "mu": 0.5,
+  "gamma_t": 5.0,
+  "drag": 0.1,
+  "dt": 0.01,
+  "spoon_radius": 5.0,
+  "spoon_k": 400.0,
+  "stir_speed": 1.0,
+  "heat_tau": 1.0,
+  "pair_tau": 2.0,
+  "heat_threshold": 15.0,
+  "cluster_heat": 80.0,
+  "pair_min": 2.0,
+  "pair_rel": 0.3,
+  "k_min": 4,
+  "k_max": 12,
+  "check_every": 10,
+  "neighbours": 20,
+  "skin": 1.0,
+  "max_per_check": 2
+ },
+ "episodes": 1,
+ "sim_steps": 720,
+ "esn": {
+  "memcap": {
+   "4": {
+    "mean": 0.9979909062385559,
+    "std": 0.000613533949945122,
+    "input_scale": 0.3,
+    "spectral_radius": 0.9,
+    "units": 128,
+    "readout_params": 129
+   },
+   "5": {
+    "mean": 0.9969649314880371,
+    "std": 0.00150235032197088,
+    "input_scale": 0.3,
+    "spectral_radius": 0.9,
+    "units": 160,
+    "readout_params": 161
+   },
+   "6": {
+    "mean": 0.9993324875831604,
+    "std": 7.966467092046514e-05,
+    "input_scale": 0.3,
+    "spectral_radius": 0.9,
+    "units": 192,
+    "readout_params": 193
+   },
+   "7": {
+    "mean": 0.9994648098945618,
+    "std": 5.9827529184985906e-05,
+    "input_scale": 0.3,
+    "spectral_radius": 0.9,
+    "units": 224,
+    "readout_params": 225
+   },
+   "8": {
+    "mean": 0.9995672106742859,
+    "std": 5.7661130995256826e-05,
+    "input_scale": 0.3,
+    "spectral_radius": 0.9,
+    "units": 256,
+    "readout_params": 257
+   },
+   "9": {
+    "mean": 0.9994730949401855,
+    "std": 0.00010770340304588899,
+    "input_scale": 0.3,
+    "spectral_radius": 0.9,
+    "units": 288,
+    "readout_params": 289
+   },
+   "10": {
+    "mean": 0.999718427658081,
+    "std": 5.4957559768809006e-05,
+    "input_scale": 0.3,
+    "spectral_radius": 0.9,
+    "units": 320,
+    "readout_params": 321
+   },
+   "11": {
+    "mean": 0.9996870160102844,
+    "std": 3.6235491279512644e-05,
+    "input_scale": 0.3,
+    "spectral_radius": 0.9,
+    "units": 352,
+    "readout_params": 353
+   },
+   "12": {
+    "mean": 0.9996733069419861,
+    "std": 1.2956483260495588e-05,
+    "input_scale": 0.3,
+    "spectral_radius": 0.9,
+    "units": 384,
+    "readout_params": 385
+   }
+  },
+  "xor": {
+   "4": {
+    "mean": 0.6275000000000001,
+    "std": 0.2588999163125911,
+    "input_scale": 0.3,
+    "spectral_radius": 1.2,
+    "units": 128,
+    "readout_params": 129
+   },
+   "5": {
+    "mean": 0.5341666666666667,
+    "std": 0.020034692133618838,
+    "input_scale": 3.0,
+    "spectral_radius": 0.5,
+    "units": 160,
+    "readout_params": 161
+   },
+   "6": {
+    "mean": 0.5291666666666667,
+    "std": 0.011242281302693356,
+    "input_scale": 1.0,
+    "spectral_radius": 0.5,
+    "units": 192,
+    "readout_params": 193
+   },
+   "7": {
+    "mean": 0.5141666666666667,
+    "std": 0.003118047822311601,
+    "input_scale": 1.0,
+    "spectral_radius": 0.5,
+    "units": 224,
+    "readout_params": 225
+   },
+   "8": {
+    "mean": 0.6649999999999999,
+    "std": 0.23691594852746126,
+    "input_scale": 0.3,
+    "spectral_radius": 1.2,
+    "units": 256,
+    "readout_params": 257
+   },
+   "9": {
+    "mean": 0.5175,
+    "std": 0.01620185174601965,
+    "input_scale": 3.0,
+    "spectral_radius": 0.5,
+    "units": 288,
+    "readout_params": 289
+   },
+   "10": {
+    "mean": 0.5233333333333333,
+    "std": 0.005892556509887875,
+    "input_scale": 3.0,
+    "spectral_radius": 0.5,
+    "units": 320,
+    "readout_params": 321
+   },
+   "11": {
+    "mean": 0.5033333333333333,
+    "std": 0.011242281302693363,
+    "input_scale": 0.3,
+    "spectral_radius": 0.5,
+    "units": 352,
+    "readout_params": 353
+   },
+   "12": {
+    "mean": 0.5066666666666666,
+    "std": 0.015855247992033694,
+    "input_scale": 0.3,
+    "spectral_radius": 0.9,
+    "units": 384,
+    "readout_params": 385
+   }
+  },
+  "narma10": {
+   "4": {
+    "mean": 0.8357048034667969,
+    "std": 0.0005654998240061104,
+    "input_scale": 0.3,
+    "spectral_radius": 0.9,
+    "units": 128,
+    "readout_params": 129
+   },
+   "5": {
+    "mean": 0.8391280770301819,
+    "std": 0.006682926788926125,
+    "input_scale": 0.3,
+    "spectral_radius": 0.9,
+    "units": 160,
+    "readout_params": 161
+   },
+   "6": {
+    "mean": 0.8409612774848938,
+    "std": 0.0020330704282969236,
+    "input_scale": 0.3,
+    "spectral_radius": 0.9,
+    "units": 192,
+    "readout_params": 193
+   },
+   "7": {
+    "mean": 0.8437864184379578,
+    "std": 0.001027469988912344,
+    "input_scale": 0.3,
+    "spectral_radius": 0.9,
+    "units": 224,
+    "readout_params": 225
+   },
+   "8": {
+    "mean": 0.8422542214393616,
+    "std": 0.0013579860096797347,
+    "input_scale": 0.3,
+    "spectral_radius": 0.9,
+    "units": 256,
+    "readout_params": 257
+   },
+   "9": {
+    "mean": 0.8444351553916931,
+    "std": 0.0006602135254070163,
+    "input_scale": 0.3,
+    "spectral_radius": 0.9,
+    "units": 288,
+    "readout_params": 289
+   },
+   "10": {
+    "mean": 0.8448492884635925,
+    "std": 0.001212194561958313,
+    "input_scale": 0.3,
+    "spectral_radius": 0.9,
+    "units": 320,
+    "readout_params": 321
+   },
+   "11": {
+    "mean": 0.8396973013877869,
+    "std": 0.0028248149901628494,
+    "input_scale": 0.3,
+    "spectral_radius": 0.9,
+    "units": 352,
+    "readout_params": 353
+   },
+   "12": {
+    "mean": 0.8425931930541992,
+    "std": 0.003373729530721903,
+    "input_scale": 0.3,
+    "spectral_radius": 0.9,
+    "units": 384,
+    "readout_params": 385
+   }
+  },
+  "latch": {
+   "4": {
+    "mean": 0.6741666666666667,
+    "std": 0.004169998667732288,
+    "input_scale": 0.3,
+    "spectral_radius": 0.9,
+    "units": 128,
+    "readout_params": 129
+   },
+   "5": {
+    "mean": 0.6768333333333333,
+    "std": 0.0016499158227686384,
+    "input_scale": 0.3,
+    "spectral_radius": 0.9,
+    "units": 160,
+    "readout_params": 161
+   },
+   "6": {
+    "mean": 0.6789999999999999,
+    "std": 0.009495613022162756,
+    "input_scale": 0.3,
+    "spectral_radius": 0.9,
+    "units": 192,
+    "readout_params": 193
+   },
+   "7": {
+    "mean": 0.6776666666666668,
+    "std": 0.0034721111093333023,
+    "input_scale": 0.3,
+    "spectral_radius": 0.9,
+    "units": 224,
+    "readout_params": 225
+   },
+   "8": {
+    "mean": 0.6768333333333333,
+    "std": 0.008759122228980643,
+    "input_scale": 0.3,
+    "spectral_radius": 0.9,
+    "units": 256,
+    "readout_params": 257
+   },
+   "9": {
+    "mean": 0.684,
+    "std": 0.0035355339059327143,
+    "input_scale": 0.3,
+    "spectral_radius": 0.9,
+    "units": 288,
+    "readout_params": 289
+   },
+   "10": {
+    "mean": 0.6843333333333333,
+    "std": 0.007813805446487364,
+    "input_scale": 0.3,
+    "spectral_radius": 0.9,
+    "units": 320,
+    "readout_params": 321
+   },
+   "11": {
+    "mean": 0.677,
+    "std": 0.012131226923385214,
+    "input_scale": 0.3,
+    "spectral_radius": 0.9,
+    "units": 352,
+    "readout_params": 353
+   },
+   "12": {
+    "mean": 0.6789999999999999,
+    "std": 0.0036742346141747707,
+    "input_scale": 0.3,
+    "spectral_radius": 0.9,
+    "units": 384,
+    "readout_params": 385
+   }
+  },
+  "mnist14": {
+   "4": {
+    "mean": 0.7756666666666666,
+    "std": 0.02036882148993627,
+    "input_scale": 0.3,
+    "spectral_radius": 0.9,
+    "units": 128,
+    "readout_params": 129
+   },
+   "5": {
+    "mean": 0.8046666666666665,
+    "std": 0.01796910929592471,
+    "input_scale": 0.3,
+    "spectral_radius": 0.9,
+    "units": 160,
+    "readout_params": 161
+   },
+   "6": {
+    "mean": 0.8163333333333332,
+    "std": 0.007039570693980916,
+    "input_scale": 0.3,
+    "spectral_radius": 1.2,
+    "units": 192,
+    "readout_params": 193
+   },
+   "7": {
+    "mean": 0.83,
+    "std": 0.006976149845485456,
+    "input_scale": 0.3,
+    "spectral_radius": 0.9,
+    "units": 224,
+    "readout_params": 225
+   },
+   "8": {
+    "mean": 0.839,
+    "std": 0.006480740698407866,
+    "input_scale": 0.3,
+    "spectral_radius": 0.9,
+    "units": 256,
+    "readout_params": 257
+   },
+   "9": {
+    "mean": 0.8553333333333333,
+    "std": 0.0177451088722749,
+    "input_scale": 0.3,
+    "spectral_radius": 1.2,
+    "units": 288,
+    "readout_params": 289
+   },
+   "10": {
+    "mean": 0.8563333333333333,
+    "std": 0.009877021593352712,
+    "input_scale": 0.3,
+    "spectral_radius": 0.9,
+    "units": 320,
+    "readout_params": 321
+   },
+   "11": {
+    "mean": 0.8649999999999999,
+    "std": 0.012083045973594584,
+    "input_scale": 0.3,
+    "spectral_radius": 1.2,
+    "units": 352,
+    "readout_params": 353
+   },
+   "12": {
+    "mean": 0.8686666666666666,
+    "std": 0.005436502143433369,
+    "input_scale": 0.3,
+    "spectral_radius": 1.2,
+    "units": 384,
+    "readout_params": 385
+   }
+  }
+ },
+ "control": {
+  "n": 32,
+  "twin_kept": 32,
+  "real_kept": 32,
+  "per_task": {
+   "memcap": {
+    "twin": 0.0996146875,
+    "real": 0.0992265625
+   },
+   "xor": {
+    "twin": 0.5715625,
+    "real": 0.5685156250000001
+   },
+   "narma10": {
+    "twin": 0.2979590625,
+    "real": 0.2885028125
+   },
+   "latch": {
+    "twin": 0.89609375,
+    "real": 0.8918671874999999
+   },
+   "mnist14": {
+    "twin": 0.5558593749999999,
+    "real": 0.55146875
+   }
+  }
+ },
+ "tested": 64,
+ "kept": 64,
+ "discarded": 0,
+ "kinds": {
+  "inhibitory knot": 8,
+  "excitatory cascade": 3,
+  "inhibitory cascade": 8,
+  "cascade": 14,
+  "knot": 30,
+  "excitatory knot": 1
+ },
+ "kept_kinds": {
+  "inhibitory knot": 8,
+  "excitatory cascade": 3,
+  "inhibitory cascade": 8,
+  "cascade": 14,
+  "knot": 30,
+  "excitatory knot": 1
+ },
+ "good_at": {
+  "xor": 37,
+  "latch": 64
+ },
+ "assembly_matters": {
+  "latch": 5,
+  "xor": 7
+ },
+ "assembly_any": 11,
+ "best": {
+  "memcap": {
+   "id": "A42-spiral-e000-d043",
+   "matter": 0.1337,
+   "esn": 0.99967
+  },
+  "xor": {
+   "id": "A42-spiral-e000-d058",
+   "matter": 0.64875,
+   "esn": 0.50667
+  },
+  "narma10": {
+   "id": "A42-spiral-e000-d040",
+   "matter": 0.44084,
+   "esn": 0.84259
+  },
+  "latch": {
+   "id": "A42-spiral-e000-d027",
+   "matter": 0.97925,
+   "esn": 0.679
+  },
+  "mnist14": {
+   "id": "A42-spiral-e000-d040",
+   "matter": 0.6575,
+   "esn": 0.86867
+  }
+ },
+ "batches": 2
+}
