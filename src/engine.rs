@@ -86,6 +86,8 @@ pub enum Ask {
     Topic,
     /// "want to know what happened today?"
     Offer,
+    /// "can you smile?" (claim None), "you cannot smile, right?" (claim Some(false))
+    Can { verb: String, claim: Option<bool> },
     /// "today I went to the market"
     Told { clause: String, when: String },
     /// a social move no act or knowledge answers: a human reply from the dialog corpus
@@ -239,6 +241,7 @@ const CONTRACTIONS: &[(&str, &[&str])] = &[
     ("don't", &["do", "not"]),
     ("doesn't", &["does", "not"]),
     ("isn't", &["is", "not"]),
+    ("cannot", &["can", "not"]),
     ("whats", &["what", "is"]),
     ("whos", &["who", "is"]),
     ("wheres", &["where", "is"]),
@@ -1116,8 +1119,31 @@ impl Engine {
                 }
             }
         }
+        // "can you smile?", "you cannot smile, right?", "are you able to dance?"
+        let ask_can = ["can you", "could you", "are you able to", "can u"].iter().find(|p| s.starts_with(*p)).map(|p| p.split(' ').count());
+        let say_can = ["you can not", "you could not", "you can", "you could", "you are not able to", "you are able to"].iter().find(|p| s.starts_with(*p)).map(|p| (p.split(' ').count(), p.contains("not")));
+        let (at, claim) = match (ask_can, say_can) {
+            (Some(k), _) => (Some(k), None),
+            (None, Some((k, neg))) => (Some(k), Some(!neg)),
+            _ => (None, None),
+        };
+        if let Some(k) = at {
+            if let Some(v) = w[k..].iter().find(|x| !talk::SOFT.contains(&x.as_str()) && x.as_str() != "not") {
+                if let Some(verb) = self.wn.base(v, Pos::V) {
+                    // "can you tell me about dogs" asks for knowledge; "can you be ..." is not an ability
+                    let skip = matches!(verb.as_str(), "be" | "have" | "do" | "get") || (matches!(verb.as_str(), "tell" | "explain" | "help" | "show" | "give") && w.contains(&"me".to_string()));
+                    if !skip {
+                        return Some(Ask::Can { verb, claim });
+                    }
+                }
+            }
+        }
         // "do you need a kiss?", "do you have a body?", "would you like a cookie?"
         if w.len() >= 3 && matches!(w[0].as_str(), "do" | "would" | "will") && w[1] == "you" {
+            // "do you know what a lynx is?": a question about the world in a frame
+            if w[2] == "know" && w.get(3).map(|x| qword(x).is_some() || matches!(x.as_str(), "about" | "anything" | "if" | "a" | "an" | "the")).unwrap_or(false) {
+                return None;
+            }
             let mut verb = w[2].clone();
             let mut rest = strip_articles(&w[3..]);
             // "would you like a cookie" is wanting one
@@ -1318,8 +1344,36 @@ impl Engine {
                         }
                     }
                     "know" | "remember" => vec![self.note("self:know")?],
-                    _ => vec![self.note("self:can")?],
+                    // "do you dance?": what she can't do, she says no to, with what it takes
+                    other => match talk::able(&self.wn, other) {
+                        (true, _) => vec![format!("Yes. {}", self.note("self:can")?)],
+                        (false, Some("body")) => vec![format!("No. To {other} takes a body. {}", lacks(self, "body"))],
+                        (false, Some("sense")) => vec![format!("No. To {other} takes senses. {}", lacks(self, "sense"))],
+                        (false, Some("feeling")) => vec![format!("No. {}", lacks(self, "feeling"))],
+                        _ => vec![format!("No. {}", self.note("self:can")?)],
+                    },
                 }
+            }
+            Ask::Can { verb, claim } => {
+                let (can, needs) = talk::able(&self.wn, verb);
+                let why = match needs {
+                    Some("body") => {
+                        let kind = talk::verb_kind(&self.wn, verb).map(|k| format!(" To {verb} is to {k}, and that takes a body.")).unwrap_or(format!(" To {verb} takes a body."));
+                        format!("{kind} {}", lacks(self, "body"))
+                    }
+                    Some("sense") => format!(" To {verb} takes senses. {}", lacks(self, "sense")),
+                    Some("feeling") => format!(" To {verb} takes feelings. {}", lacks(self, "feeling")),
+                    _ => format!(" {}", self.note("self:can")?),
+                };
+                let text = match (claim, can) {
+                    (None, true) => format!("Yes.{why}"),
+                    (None, false) => format!("No, I can't {verb}.{why}"),
+                    (Some(false), false) => format!("Right, I can't {verb}.{why}"),
+                    (Some(false), true) => format!("I can, in my way.{why}"),
+                    (Some(true), true) => format!("Yes, I can.{why}"),
+                    (Some(true), false) => format!("No, I can't {verb}.{why}"),
+                };
+                vec![text]
             }
             Ask::Offer => vec![format!("Yes{}. {}", to(&name), self.note("self:listen")?)],
             Ask::Told { clause, when } => {
@@ -1413,6 +1467,24 @@ impl Engine {
             && w.iter().any(|x| talk.contains(&x.as_str()))
         {
             return Ask::Myself("self:chat");
+        }
+        // "can you tell me about foxes?": the request is a frame; what is asked is inside it
+        for frame in ["can you tell me about", "could you tell me about", "can you tell me", "could you tell me", "can you explain", "could you explain", "do you know about", "do you know anything about", "do you know"] {
+            if s.starts_with(frame) {
+                let k = frame.split(' ').count();
+                if w.len() > k {
+                    let rest = w[k..].to_vec();
+                    let mut inner = vec!["what".to_string(), "is".to_string()];
+                    let starts_q = qword(&rest[0]).is_some();
+                    if starts_q {
+                        inner.clear();
+                    }
+                    inner.extend(rest);
+                    let n = inner.len();
+                    let ro = if starts_q { orig[orig.len() - n..].to_vec() } else { inner.clone() };
+                    return self.read_words(inner, ro, true);
+                }
+            }
         }
         if s.starts_with("can you") || s.starts_with("could you") || s.starts_with("will you") || s.starts_with("would you") || s == "help" || s.starts_with("help me") {
             return Ask::Myself("self:can");
@@ -1700,7 +1772,7 @@ impl Engine {
         let topic_ring = |e: &Engine, t: &Topic| e.node_of.get(&(t.pos, t.offset)).and_then(|&n| e.node_ring(n));
         // an act of talk is answered from herself, the speaker and the word network
         let act_words = match &ask {
-            Ask::Greet | Ask::Introduce { .. } | Ask::WhoAmI | Ask::Feeling { .. } | Ask::ActOnMe { .. } | Ask::AboutMe { .. } | Ask::AreYou { .. } | Ask::Topic | Ask::Offer | Ask::Told { .. } => {
+            Ask::Greet | Ask::Introduce { .. } | Ask::WhoAmI | Ask::Feeling { .. } | Ask::ActOnMe { .. } | Ask::AboutMe { .. } | Ask::AreYou { .. } | Ask::Topic | Ask::Offer | Ask::Told { .. } | Ask::Can { .. } => {
                 let a = ask.clone();
                 self.answer_act(&a, msg)
             }
@@ -1711,7 +1783,7 @@ impl Engine {
             reading = false;
         }
         match &ask {
-            Ask::Greet | Ask::Introduce { .. } | Ask::WhoAmI | Ask::Feeling { .. } | Ask::ActOnMe { .. } | Ask::AboutMe { .. } | Ask::AreYou { .. } | Ask::Topic | Ask::Offer | Ask::Told { .. } => {
+            Ask::Greet | Ask::Introduce { .. } | Ask::WhoAmI | Ask::Feeling { .. } | Ask::ActOnMe { .. } | Ask::AboutMe { .. } | Ask::AreYou { .. } | Ask::Topic | Ask::Offer | Ask::Told { .. } | Ask::Can { .. } => {
                 if before.is_empty() {
                     before.push("I don't know what you are asking.".into());
                 }

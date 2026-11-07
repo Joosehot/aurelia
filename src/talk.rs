@@ -43,8 +43,8 @@ pub fn bodily(wn: &WordNet, key: Key) -> Option<String> {
             if let Some(w) = s.words.iter().find(|w| BODILY.contains(&w.to_lowercase().as_str())) {
                 return Some(w.replace('_', " "));
             }
-            // verbs of contact, of the body, of eating and drinking
-            if k.0 == Pos::V && matches!(s.lexfile, 29 | 34 | 35) {
+            // verbs of the body, of eating and drinking, of contact, of moving
+            if k.0 == Pos::V && matches!(s.lexfile, 29 | 34 | 35 | 38) {
                 return Some(crate::wordnet::show(&s.words[0]));
             }
         }
@@ -81,3 +81,30 @@ pub const ROLES: &[&str] = &["creator", "maker", "builder", "father", "mother", 
 
 /// Words of a feeling report after "I am" / "I feel".
 pub const DEGREE: &[&str] = &["a", "bit", "little", "so", "very", "really", "kind", "of", "kinda", "quite", "pretty", "feeling", "rather", "too", "today", "now", "tonight", "right"];
+
+/// What she does: talk, answer, reason, remember. Anything else she cannot.
+pub const ABLE: &[&str] = &[
+    "talk", "chat", "speak", "answer", "listen", "remember", "reason", "think", "compare", "explain", "reply", "read", "write",
+    "tell", "help", "converse", "recall", "infer", "deduce", "conclude", "learn", "count", "check",
+];
+
+/// Can she do it? Yes or no, and what it takes when no.
+pub fn able(wn: &WordNet, verb: &str) -> (bool, Option<&'static str>) {
+    if ABLE.contains(&verb) {
+        return (true, None);
+    }
+    let Some(&off) = wn.senses(verb, Pos::V).first() else { return (false, None) };
+    let lex = wn.get((Pos::V, off)).map(|s| s.lexfile).unwrap_or(0);
+    match lex {
+        29 | 34 | 35 | 38 => (false, Some("body")),
+        39 => (false, Some("sense")),
+        37 => (false, Some("feeling")),
+        _ => {
+            if bodily(wn, (Pos::V, off)).is_some() {
+                (false, Some("body"))
+            } else {
+                (false, None)
+            }
+        }
+    }
+}
