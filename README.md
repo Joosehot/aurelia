@@ -11,7 +11,7 @@ This folder holds two things:
   is a separate program:
   `python -m particle_maker run --minutes 2 --stir spiral --seed 42`.
 
-The rest of this file is about Aurelia.
+The rest of this file is about Aurelia. The data she brands is credited, with its licenses, in [THIRD_PARTY.md](THIRD_PARTY.md); the dialog is **Topical-Chat** (Amazon Alexa AI, CDLA-Sharing 1.0).
 
 ```
 .venv\Scripts\python.exe tools\export_knowledge.py   # once: knowledge/ from what is on the machine
