@@ -284,3 +284,20 @@ The last conversation, run once through `aurelia chat`:
 - **Speed:** about 3.5 s per answer on the CPU.
 - **The phrasing is rule-based.** It never makes a sentence it cannot check,
   and it reads plainly.
+
+## License
+
+The code and documentation are under the [MIT License](LICENSE). No data is
+in this repository. To run Aurelia, the branded data has to be brought in
+locally:
+
+- **WordNet 3.1:** set `wordnet` in `aurelia.toml` to a `dict` folder.
+- **World and book knowledge:** `tools/export_knowledge.py` reads them from
+  a Devil's Clockwork state (Simple English Wikipedia propositions, Primo's
+  sentences, the Gutenberg books). The paths are at the top of the script.
+- **Topical-Chat:** the `conversations/*.json` files and `DATALICENSE` from
+  github.com/alexa/Topical-Chat go into `dialog/topical_chat/`.
+
+Each of these keeps its own license, listed in
+[THIRD_PARTY.md](THIRD_PARTY.md). Topical-Chat is © Amazon, under
+CDLA-Sharing 1.0.
