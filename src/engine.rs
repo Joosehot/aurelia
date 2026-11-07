@@ -333,6 +333,10 @@ impl Engine {
                     e.slot.insert(n, p);
                 }
             }
+            // what Aurelia holds of herself and the moral core: what is missing is branded, once
+            for f in knowledge::self_facts().into_iter().chain(ethic_facts()) {
+                e.brand(f);
+            }
             eprintln!(
                 "branded block loaded: {} WordNet senses, {} world and book items, {} branded by talk (turn {})",
                 e.nodes.len(),
@@ -641,7 +645,11 @@ impl Engine {
                     }
                 };
                 let mut ok = self.chain_ok(pa, &kinds) && self.chain_ok(pb, &kinds);
-                let core = format!("{} and {} are both {}: {}, {}.", self.np(a), self.np(b), kind, how(a, pa), how(b, pb));
+                let core = if pa.len() <= 2 && pb.len() <= 2 {
+                    format!("{} and {} are both {}.", self.np(a), self.np(b), kind)
+                } else {
+                    format!("{} and {} are both {}: {}, {}.", self.np(a), self.np(b), kind, how(a, pa), how(b, pb))
+                };
                 let text = match mem {
                     Some(i) => {
                         let f = self.facts.get(*i as usize)?;
@@ -869,8 +877,22 @@ impl Engine {
             sentences.push((cur.trim().to_string(), false));
         }
         let mut kept: Vec<(Vec<String>, Vec<String>, bool)> = Vec::new();
+        let whole = tokens(msg).0.join(" ");
+        // asked about herself by name
+        if ["is aurelia", "are you aurelia", "about aurelia", "aurelia who are you", "aurelia what are you"].iter().any(|p| whole.contains(p)) {
+            return Ask::Myself("self:who");
+        }
+        let mut named = false;
         for (s, q) in sentences {
             let (mut w, mut o) = tokens(&s);
+            // her name said to her is not what the message is about ("Ok Aurelia, can we chat?")
+            let before = w.len();
+            let keep: Vec<bool> = w.iter().map(|x| x != "aurelia").collect();
+            let mut k = keep.iter();
+            w.retain(|_| *k.next().unwrap());
+            let mut k = keep.iter();
+            o.retain(|_| *k.next().unwrap());
+            named |= w.len() < before;
             while w.first().map(|x| FILLER.contains(&x.as_str())).unwrap_or(false) {
                 w.remove(0);
                 o.remove(0);
@@ -885,7 +907,7 @@ impl Engine {
             }
         }
         let Some(pick) = kept.iter().find(|k| k.2).or(kept.last()).cloned() else {
-            return if tokens(msg).0.is_empty() { Ask::Nothing } else { Ask::Greet };
+            return if tokens(msg).0.is_empty() && !named { Ask::Nothing } else { Ask::Greet };
         };
         self.read_words(pick.0, pick.1, pick.2)
     }
@@ -913,6 +935,14 @@ impl Engine {
     fn read_words(&self, w: Vec<String>, orig: Vec<String>, asks: bool) -> Ask {
         let s = w.join(" ");
         let question = asks || matches!(w[0].as_str(), "is" | "are" | "do" | "does" | "can" | "could" | "will" | "would");
+        // an invitation to talk is answered, not looked up
+        let talk = ["chat", "talk", "speak", "converse"];
+        if (s.starts_with("can we") || s.starts_with("could we") || s.starts_with("shall we") || s.starts_with("let's") || s.starts_with("lets")
+            || s.starts_with("do you want to") || s.starts_with("want to") || s.starts_with("wanna") || s.starts_with("can i talk") || s.starts_with("can you chat") || s.starts_with("can you talk"))
+            && w.iter().any(|x| talk.contains(&x.as_str()))
+        {
+            return Ask::Myself("self:chat");
+        }
         if s.starts_with("can you") || s.starts_with("could you") || s.starts_with("will you") || s.starts_with("would you") || s == "help" || s.starts_with("help me") {
             return Ask::Myself("self:can");
         }
