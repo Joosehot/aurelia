@@ -12,6 +12,7 @@ mod ethics;
 mod infer;
 mod knowledge;
 mod store;
+mod talk;
 mod think;
 mod wordnet;
 

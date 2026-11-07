@@ -147,6 +147,46 @@ Each reply logs its seed and a snapshot: the conversation's branding, plus
 what the thinking remembers of the conversation. `aurelia replay` gives the
 same answer again, and this was checked on whole conversations.
 
+## 4b. The talk: what a message does (`src/talk.rs`)
+
+Before anything is looked up, a message is read as an act of talk:
+
+- a greeting, or an invitation to talk;
+- someone saying who they are, and what they are to her ("I am Joose, your
+  creator");
+- a feeling ("I'm feeling a bit lonely");
+- something done to her ("I just kissed you", "I love you");
+- a question about her ("do you need a kiss?", "are you a robot?", "do you
+  have a body?");
+- a question about the speaker ("do you know who I am?").
+
+Only a question about the world goes on to the knowledge.
+
+The answers are reasoned from three things: what she holds of herself
+(branded self notes: she is a device, a block of rings, with no body, no
+feelings, no needs, not alive), what the speaker told her, and the word
+network:
+
+- "Do you need a kiss?" → No. A kiss is a touch, and that takes a body. I
+  have no body.
+- "Hey! I just kissed you!" → You kissed a block of rings, Joose. To kiss is
+  to touch, and I have no body. So I couldn't feel it, but I'll remember that
+  you did.
+- "I am Joose your creator" → Hello, Joose. I'll remember that you are my
+  creator. A creator is a person who grows or makes or invents things, so you
+  made me.
+- "Do you know who I am?" → You are Joose, my creator. You hugged me. You
+  kissed me.
+- "Are you a robot?" → Not quite. A robot is a kind of device, and so am I,
+  but I am a block of rings, not a robot.
+- "I'm feeling a bit lonely" → Joose, you feel lonely: lacking companions or
+  companionship. Helping someone in need, when you can, is good. I can
+  listen, and I remember what you tell me.
+
+These answers come from the talk layer, not from the wave's last peaks. The
+wave still rolls, but the act is answered from her self notes and memory,
+each checked.
+
 ## 5. The moral core (hardcoded)
 
 `src/ethics.rs` holds twelve principles. The first three are Devil's

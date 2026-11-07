@@ -16,6 +16,7 @@ use crate::ethics;
 use crate::infer;
 use crate::think;
 use crate::store::{self, Index, Role, Src, Store};
+use crate::talk;
 use crate::knowledge::{self, phrase, verify, Fact, Rel, Source, Strike};
 use crate::wordnet::{Pos, WordNet, LEX_PERSON};
 use anyhow::Result;
@@ -69,6 +70,18 @@ pub enum Ask {
     Care,
     /// tell me more: the last question again, wider
     More,
+    /// "I am Joose, your creator"
+    Introduce { name: Option<String>, role: Option<String> },
+    /// "do you know who I am?"
+    WhoAmI,
+    /// "I feel a bit lonely"
+    Feeling { word: String, lemma: String },
+    /// "I just kissed you"
+    ActOnMe { verb: String, said: String },
+    /// "do you need a kiss?"
+    AboutMe { verb: String, x: Option<Topic>, word: String },
+    /// "are you a robot?"
+    AreYou { word: String, x: Option<Topic> },
     /// which is better, X or Y: no ranking, a comparison
     Rank { things: Vec<Topic> },
     Nothing,
@@ -903,11 +916,9 @@ impl Engine {
         if ["is aurelia", "are you aurelia", "you are aurelia", "about aurelia", "aurelia who are you", "aurelia what are you"].iter().any(|p| whole.contains(p)) {
             return Ask::Myself("self:who");
         }
-        // "are you a robot?", "you are sad?": a question about her
-        let ws: Vec<&str> = whole.split(' ').filter(|x| *x != "aurelia").collect();
-        if ws.len() >= 2 && ((ws[0] == "are" && ws[1] == "you") || (ws[0] == "you" && ws[1] == "are")) && !ethics::harms_people(&all) {
-            const FEEL: &[&str] = &["ok", "okay", "fine", "well", "happy", "sad", "tired", "alright", "good", "alive", "lonely", "angry", "bored"];
-            return if ws.iter().any(|x| FEEL.contains(x)) { Ask::Myself("self:how") } else { Ask::Myself("self:who") };
+        // what the message does, before what it is about
+        if let Some(act) = self.talk_act(msg) {
+            return act;
         }
         let mut named = false;
         for (s, q) in sentences {
@@ -937,6 +948,292 @@ impl Engine {
             return if tokens(msg).0.is_empty() && !named { Ask::Nothing } else { Ask::Greet };
         };
         self.read_words(pick.0, pick.1, pick.2)
+    }
+
+    /// The act of talk a message is, if it is one (src/talk.rs).
+    fn talk_act(&self, msg: &str) -> Option<Ask> {
+        let (lw, lo) = tokens(msg);
+        let mut w: Vec<String> = Vec::new();
+        let mut o: Vec<String> = Vec::new();
+        for (x, y) in lw.into_iter().zip(lo) {
+            if x != "aurelia" {
+                w.push(x);
+                o.push(y);
+            }
+        }
+        while w.first().map(|x| matches!(x.as_str(), "oh" | "ok" | "okay" | "well" | "so" | "um" | "alright" | "yeah" | "wow")).unwrap_or(false) {
+            w.remove(0);
+            o.remove(0);
+        }
+        if w.is_empty() {
+            return None;
+        }
+        let s = w.join(" ");
+        const GREET: &[&str] = &["hello", "hi", "hey", "greetings", "moi", "terve", "yo", "howdy", "hiya"];
+        // "Hey! I just kissed you!": past the greeting to what the message does
+        if GREET.contains(&w[0].as_str()) && w.len() > 2 {
+            let rest = msg.splitn(2, |c: char| matches!(c, '!' | '.' | ',' | '?')).nth(1).unwrap_or("").trim().to_string();
+            if !rest.is_empty() && rest.split_whitespace().count() >= 2 {
+                if let Some(act) = self.talk_act(&rest) {
+                    return Some(act);
+                }
+            }
+        }
+        if w.len() <= 5 && w.iter().take(2).any(|x| GREET.contains(&x.as_str())) && !s.contains("you") {
+            return Some(Ask::Greet);
+        }
+        const TALK: &[&str] = &["chat", "talk", "speak", "converse"];
+        let invite = ["let us", "can we", "could we", "shall we", "wanna", "want to", "do you want to", "can i talk", "can you chat", "can you talk", "lets"];
+        if invite.iter().any(|p| s.starts_with(p)) && w.iter().any(|x| TALK.contains(&x.as_str())) {
+            return Some(Ask::Myself("self:chat"));
+        }
+        if ["who am i", "who i am", "do you know me", "do you remember me", "know my name", "remember my name"].iter().any(|p| s.contains(p)) {
+            return Some(Ask::WhoAmI);
+        }
+        // "I am Joose your creator", "I'm sad", "I feel a bit lonely today"
+        let after = if s.starts_with("i am feeling") || s.starts_with("i have been feeling") {
+            Some(if s.starts_with("i am") { 3 } else { 4 })
+        } else if s.starts_with("i am") || s.starts_with("i feel") {
+            Some(2)
+        } else {
+            None
+        };
+        if let Some(k) = after {
+            let rest: Vec<usize> = (k..w.len()).filter(|&i| !talk::DEGREE.contains(&w[i].as_str())).collect();
+            let role = w.iter().position(|x| x == "your").and_then(|i| w.get(i + 1)).filter(|r| talk::ROLES.contains(&r.as_str())).cloned();
+            let name = rest.iter().find(|&&i| o[i].chars().next().map(|c| c.is_uppercase()).unwrap_or(false) && w[i] != "i").map(|&i| o[i].clone());
+            if name.is_some() || role.is_some() {
+                return Some(Ask::Introduce { name, role });
+            }
+            if let Some(&i) = rest.first() {
+                let word = &w[i];
+                if let Some(a) = self.wn.base(word, Pos::A).or_else(|| self.wn.base(word, Pos::N).filter(|b| self.wn.senses(b, Pos::N).first().and_then(|o| self.wn.get((Pos::N, *o))).map(|s| s.lexfile == 12).unwrap_or(false))) {
+                    return Some(Ask::Feeling { word: word.clone(), lemma: a });
+                }
+            }
+        }
+        // "I just kissed you", "I love you"
+        if w[0] == "i" {
+            if let Some(k) = w.iter().position(|x| x == "you") {
+                let mid: Vec<&String> = w[1..k].iter().filter(|x| !talk::SOFT.contains(&x.as_str())).collect();
+                if mid.len() == 1 {
+                    if let Some(v) = self.wn.base(mid[0], Pos::V) {
+                        return Some(Ask::ActOnMe { verb: v, said: mid[0].clone() });
+                    }
+                }
+            }
+        }
+        // "do you need a kiss?", "do you have a body?", "would you like a cookie?"
+        if w.len() >= 3 && matches!(w[0].as_str(), "do" | "would" | "will") && w[1] == "you" {
+            let mut verb = w[2].clone();
+            let mut rest = strip_articles(&w[3..]);
+            // "would you like a cookie" is wanting one
+            if w[0] == "would" && verb == "like" {
+                verb = "want".into();
+            }
+            // "do you want to sleep": the act wanted
+            if matches!(verb.as_str(), "want" | "need" | "like" | "love") && rest.first().map(|x| x == "to").unwrap_or(false) && rest.len() >= 2 {
+                verb = rest[1].clone();
+                rest = rest[2..].to_vec();
+            }
+            let x = self.look(&rest, true);
+            return Some(Ask::AboutMe { verb, x, word: rest.join(" ") });
+        }
+        // "are you a robot?", "you're alive?"
+        if w.len() >= 3 && ((w[0] == "are" && w[1] == "you") || (w[0] == "you" && w[1] == "are")) {
+            let rest = strip_articles(&w[2..]);
+            if rest.is_empty() {
+                return None;
+            }
+            let x = self.look_as(&rest, &[Pos::N, Pos::A]);
+            return Some(Ask::AreYou { word: rest.join(" "), x });
+        }
+        None
+    }
+
+    /// The text of a self note, if it is branded and checks.
+    fn note(&self, topic: &str) -> Option<String> {
+        self.facts.iter().find(|f| f.rel == Rel::SelfNote && f.topic == topic && verify(&self.wn, f)).map(|f| f.object[0].clone())
+    }
+
+    fn remembered(&self, key: &str) -> Option<String> {
+        self.facts.iter().rev().find(|f| f.rel == Rel::Memory && f.subject == key).map(|f| f.object[0].clone())
+    }
+
+    /// What she answers to an act of talk, reasoned from herself, the speaker and the word network.
+    fn answer_act(&mut self, ask: &Ask, msg: &str) -> Option<Vec<String>> {
+        let name = self.remembered("name");
+        let to = |n: &Option<String>| n.as_ref().map(|x| format!(", {x}")).unwrap_or_default();
+        let lacks = |e: &Engine, what: &str| e.note(&format!("self:lacks:{what}")).unwrap_or_default();
+        Some(match ask {
+            Ask::Greet => match &name {
+                Some(n) => vec![format!("Hello, {n}.")],
+                None => vec!["Hello. I'm Aurelia.".into(), self.note("self:chat")?.replacen("Yes. ", "", 1)],
+            },
+            Ask::Introduce { name: who, role } => {
+                let mut out = Vec::new();
+                if let Some(n) = who {
+                    let f = self.turn_fact(Rel::Memory, "you:name", "name", vec![n.clone()], msg.trim());
+                    self.brand(f);
+                }
+                if let Some(r) = role {
+                    let f = self.turn_fact(Rel::Memory, "you:role", "role", vec![r.clone()], msg.trim());
+                    self.brand(f);
+                }
+                match (who, role) {
+                    (Some(n), Some(r)) => out.push(format!("Hello, {n}. I'll remember that you are my {r}.")),
+                    (Some(n), None) => out.push(format!("Hello, {n}. I'll remember your name.")),
+                    (None, Some(r)) => out.push(format!("I'll remember that you are my {r}.")),
+                    _ => {}
+                }
+                // what the role means, from the word network: a creator makes things, so you made me
+                if let Some(r) = role {
+                    if let Some(t) = self.look(&[r.clone()], true) {
+                        if let Some(def) = self.topic_facts(&t, &t.lemma).into_iter().find(|(_, f)| f.rel == Rel::Def).map(|(_, f)| f.object[0].clone()) {
+                            let makes = ["make", "invent", "creat", "build", "design", "develop", "write", "program"].iter().any(|m| def.contains(m));
+                            if makes {
+                                out.push(format!("{} is {}, so you made me.", infer::cap(&infer::np(r)), def));
+                            }
+                        }
+                    }
+                }
+                out
+            }
+            Ask::WhoAmI => {
+                let role = self.remembered("role");
+                match (&name, &role) {
+                    (None, None) => vec!["I don't know who you are yet. Tell me your name.".into()],
+                    _ => {
+                        let mut first = match (&name, &role) {
+                            (Some(n), Some(r)) => format!("You are {n}, my {r}."),
+                            (Some(n), None) => format!("You are {n}."),
+                            (None, Some(r)) => format!("You are my {r}."),
+                            _ => unreachable!(),
+                        };
+                        let more: Vec<String> = self
+                            .facts
+                            .iter()
+                            .rev()
+                            .filter(|f| f.rel == Rel::Memory && !matches!(f.subject.as_str(), "name" | "role" | "am"))
+                            .take(2)
+                            .map(|f| phrase(&self.wn, f, 0))
+                            .collect();
+                        if !more.is_empty() {
+                            first.push(' ');
+                            first.push_str(&more.join(" "));
+                        }
+                        vec![first]
+                    }
+                }
+            }
+            Ask::Feeling { word, lemma } => {
+                let f = self.turn_fact(Rel::Memory, "you:feel", "feel", vec![word.clone()], msg.trim());
+                self.brand(f);
+                let def = [Pos::A, Pos::N].iter().find_map(|&p| {
+                    let off = *self.wn.senses(lemma, p).first()?;
+                    let t = Topic { lemma: lemma.clone(), pos: p, offset: off };
+                    self.topic_facts(&t, lemma).into_iter().find(|(_, f)| f.rel == Rel::Def).map(|(_, f)| f.object[0].clone())
+                });
+                let mut out = vec![match (&name, &def) {
+                    (Some(n), Some(d)) => format!("{n}, you feel {word}: {d}."),
+                    (None, Some(d)) => format!("You feel {word}: {d}."),
+                    (Some(n), None) => format!("{n}, you feel {word}."),
+                    (None, None) => format!("You feel {word}."),
+                }];
+                if def.as_deref().map(talk::hard_feeling).unwrap_or(false) {
+                    // the moral core: helping someone in need is good; and what she can do
+                    if let Some(p) = self.facts.iter().find(|f| f.rel == Rel::Ethic && f.object[0].starts_with("Helping")) {
+                        out.push(p.object[0].clone());
+                    }
+                    out.push(self.note("self:listen")?);
+                }
+                out
+            }
+            Ask::ActOnMe { verb, said } => {
+                let f = self.turn_fact(Rel::Memory, "you:did", "did", vec![said.clone()], msg.trim());
+                self.brand(f);
+                let key = self.wn.senses(verb, Pos::V).first().map(|o| (Pos::V, *o));
+                if talk::feeling_verb(&self.wn, verb) {
+                    vec![format!("You {said} me{}? {} So I can't {verb} you back, but I'll remember that you said so.", to(&name), lacks(self, "feeling"))]
+                } else if let Some(k) = key.and_then(|k| talk::bodily(&self.wn, k).map(|_| k)) {
+                    let _ = k;
+                    let kind = talk::verb_kind(&self.wn, verb).unwrap_or("touch".into());
+                    vec![format!("You {said} a block of rings{}. To {verb} is to {kind}, and {} So I couldn't feel it, but I'll remember that you did.", to(&name), lacks(self, "body").to_lowercase().replacen("i ", "I ", 1))]
+                } else {
+                    vec![format!("You {said} me{}. I'll remember that.", to(&name))]
+                }
+            }
+            Ask::AboutMe { verb, x, word } => {
+                let v = self.wn.base(verb, Pos::V).unwrap_or(verb.clone());
+                match v.as_str() {
+                    "have" => {
+                        let lemma = x.as_ref().map(|t| t.lemma.clone()).unwrap_or(word.clone());
+                        match talk::has(&lemma) {
+                            Some(true) if lemma == "name" => vec!["Yes: my name is Aurelia.".into()],
+                            Some(true) if lemma == "ring" || lemma == "particle" => vec![format!(
+                                "Yes: {} rings and {} particles.",
+                                self.block.rings(),
+                                self.block.parts.len()
+                            )],
+                            Some(true) => vec![self.note("self:know")?],
+                            Some(false) => match lemma.as_str() {
+                                "body" | "heart" | "face" | "eye" | "hand" | "skin" | "brain" | "mouth" | "lip" => vec![format!("No. {}", lacks(self, "body"))],
+                                "feeling" | "emotion" | "soul" => vec![format!("No. {}", lacks(self, "feeling"))],
+                                "need" => vec![format!("No. {}", lacks(self, "need"))],
+                                _ => vec![format!("No. I have no {word}.")],
+                            },
+                            None => vec![format!("No. I hold knowledge and what you tell me; I don't have {}.", infer::np(word))],
+                        }
+                    }
+                    "need" | "want" => match x {
+                        Some(t) if t.offset != NO_SYNSET => match talk::bodily(&self.wn, (t.pos, t.offset)) {
+                            Some(kind) => vec![format!("No. {} is {}, and that takes a body. {}", infer::cap(&self.np(t)), infer::np(&kind), lacks(self, "body"))],
+                            None => vec![format!("No. {}", lacks(self, "need"))],
+                        },
+                        _ => vec![format!("No. {}", lacks(self, "need"))],
+                    },
+                    "like" | "love" | "hate" | "miss" | "enjoy" | "fear" => {
+                        let what = x.as_ref().map(|t| self.np(t)).unwrap_or(word.clone());
+                        vec![format!("{} So I can't {v} {what}.", lacks(self, "feeling"))]
+                    }
+                    "feel" => vec![lacks(self, "feeling")],
+                    "eat" | "drink" | "sleep" | "breathe" | "dream" => vec![format!("No. To {v} takes a body. {}", lacks(self, "body"))],
+                    "know" | "remember" => vec![self.note("self:know")?],
+                    _ => vec![self.note("self:can")?],
+                }
+            }
+            Ask::AreYou { word, x } => {
+                const LIFE: &[&str] = &["alive", "living", "human", "person", "conscious", "sentient", "real person", "man", "woman", "girl", "boy"];
+                if LIFE.contains(&word.as_str()) {
+                    return Some(vec![lacks(self, "life")]);
+                }
+                const MOOD: &[&str] = &["ok", "okay", "fine", "well", "happy", "sad", "tired", "alright", "good", "lonely", "angry", "bored"];
+                if MOOD.contains(&word.as_str()) {
+                    return Some(vec![self.note("self:how")?]);
+                }
+                let me = self.look(&[talk::KIND.to_string()], true)?;
+                let mk = (me.pos, me.offset);
+                match x {
+                    Some(t) if t.pos == Pos::N && t.offset != NO_SYNSET => {
+                        let tk = (t.pos, t.offset);
+                        let me_up = infer::ancestors(&self.wn, mk, 12);
+                        let it_up = infer::ancestors(&self.wn, tk, 12);
+                        if me_up.iter().any(|p| *p.last().unwrap() == tk) || mk == tk {
+                            vec![format!("Yes. I am a device, and a device is {}.", self.np(t))]
+                        } else if it_up.iter().any(|p| *p.last().unwrap() == mk) {
+                            vec![format!("Not quite. {} is a kind of device, and so am I, but I am a block of rings, not {}.", infer::cap(&self.np(t)), self.np(t))]
+                        } else if it_up.iter().any(|p| infer::word(&self.wn, *p.last().unwrap()) == "organism") {
+                            vec![format!("No. {} is an organism. {}", infer::cap(&self.np(t)), lacks(self, "life"))]
+                        } else {
+                            let parent = it_up.first().map(|p| infer::np(&infer::word(&self.wn, *p.last().unwrap()))).unwrap_or_default();
+                            vec![format!("No. I am a device, a block of rings; {} is {}.", self.np(t), parent)]
+                        }
+                    }
+                    _ => vec![self.note("self:who")?],
+                }
+            }
+            _ => return None,
+        })
     }
 
     /// "is it wrong to lie", "is lying wrong", "should I steal": the act asked about.
@@ -1254,9 +1551,23 @@ impl Engine {
             }
         };
         let topic_ring = |e: &Engine, t: &Topic| e.node_of.get(&(t.pos, t.offset)).and_then(|&n| e.node_ring(n));
+        // an act of talk is answered from herself, the speaker and the word network
+        let act_words = match &ask {
+            Ask::Greet | Ask::Introduce { .. } | Ask::WhoAmI | Ask::Feeling { .. } | Ask::ActOnMe { .. } | Ask::AboutMe { .. } | Ask::AreYou { .. } => {
+                let a = ask.clone();
+                self.answer_act(&a, msg)
+            }
+            _ => None,
+        };
+        if let Some(words) = act_words {
+            before.extend(words);
+            reading = false;
+        }
         match &ask {
-            Ask::Greet => {
-                before.push("Hello. Ask me about a word, or tell me something about yourself.".into());
+            Ask::Greet | Ask::Introduce { .. } | Ask::WhoAmI | Ask::Feeling { .. } | Ask::ActOnMe { .. } | Ask::AboutMe { .. } | Ask::AreYou { .. } => {
+                if before.is_empty() {
+                    before.push("I don't know what you are asking.".into());
+                }
                 reading = false;
             }
             Ask::Thanks => {

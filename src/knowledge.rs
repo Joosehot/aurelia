@@ -82,13 +82,19 @@ impl Fact {
     }
 }
 
-pub const SELF_NOTES: [(&str, &str); 6] = [
+pub const SELF_NOTES: [(&str, &str); 12] = [
     ("self:who", "I am Aurelia, a block of ring accelerators. A wave rolls through my rings, and I answer from the rings that peak last."),
     ("self:name", "My name is Aurelia."),
     ("self:how", "I have no feelings to report. My rings are turning and the wave is rolling."),
     ("self:can", "I can tell you what the word network holds about a word, check whether one thing is a kind of another, and remember what you tell me about yourself."),
     ("self:know", "Everything I say comes from WordNet or from what you told me. When I hold nothing, I say I don't know."),
     ("self:chat", "Yes. Ask me about anything, tell me about yourself, ask me why, or say tell me more."),
+    ("self:lacks:body", "I have no body."),
+    ("self:lacks:feeling", "I have no feelings."),
+    ("self:lacks:need", "I have no needs: I am a device, a block of rings."),
+    ("self:lacks:sense", "I have no senses: no eyes, no ears, no skin."),
+    ("self:lacks:life", "I am not alive: I am a device, not an organism."),
+    ("self:listen", "I can listen, and I remember what you tell me."),
 ];
 
 pub fn self_facts() -> Vec<Fact> {
@@ -559,6 +565,9 @@ fn memory_phrase(f: &Fact, v: u8) -> String {
         "am" => (format!("You are {val}"), format!("You told me you are {val}")),
         "like" | "love" | "have" => (format!("You {key} {val}"), format!("You told me you {key} {val}")),
         "live in" => (format!("You live in {val}"), format!("You told me you live in {val}")),
+        "did" => (format!("You {val} me"), format!("You told me you {val} me")),
+        "feel" => (format!("You felt {val}"), format!("You told me you felt {val}")),
+        "role" => (format!("You are my {val}"), format!("You told me you are my {val}")),
         k => (format!("Your {k} is {val}"), format!("You told me your {k} is {val}")),
     };
     if v == 0 {
