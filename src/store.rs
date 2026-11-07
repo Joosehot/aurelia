@@ -30,6 +30,10 @@ pub struct Item {
     pub kind: String,
     pub subj: String,
     pub text: String,
+    /// the proposition's verb, whether it is denied, and what it says of the subject
+    pub verb: String,
+    pub neg: bool,
+    pub pred: String,
 }
 
 pub struct Store {
@@ -71,6 +75,9 @@ impl Store {
                 kind: f[4].to_string(),
                 subj: f[5].to_string(),
                 text: f[6].to_string(),
+                verb: f.get(7).unwrap_or(&"").to_string(),
+                neg: f.get(9).map(|x| *x == "1").unwrap_or(false),
+                pred: f.get(10).unwrap_or(&"").to_string(),
             });
         }
         let books = std::fs::read_to_string(dir.join("books.tsv")).context("reading knowledge/books.tsv")?;
@@ -87,6 +94,9 @@ impl Store {
                 kind: String::new(),
                 subj: String::new(),
                 text: f[4].to_string(),
+                verb: String::new(),
+                neg: false,
+                pred: String::new(),
             });
         }
         Ok(Store { items })

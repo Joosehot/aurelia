@@ -22,8 +22,8 @@ wave_fronts = 12   # one message sends a train of fronts
 front_gap = 24
 idle_steps = 120   # the block turns on its own before each wave
 rise = 0.6        # lift per step per rad/step of spin above a ring's pace
-against_rise = 0.5 # a particle running against its ring rises this much slower
-limit_gain = 10.0  # a ring's limit = 1 + limit_gain * the highest charge it holds
+against_rise = 1.0 # a particle running against its ring rises this much slower
+limit_gain = 10.0   # a ring's limit = 1 + limit_gain * the highest charge it holds
 window = 0.15      # how near two particles must be at a shared corner to collide (rad)
 lift_share = 0.08  # a collision evens this share of the lift difference
-mesh = 0.3         # a collision pushes the two spins this far toward meshing
+mesh = 0.05         # a collision pushes the two spins this far toward meshing

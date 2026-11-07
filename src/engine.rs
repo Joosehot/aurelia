@@ -13,6 +13,8 @@
 
 use crate::block::{Block, Cfg, Rng};
 use crate::ethics;
+use crate::infer;
+use crate::think;
 use crate::store::{self, Index, Role, Src, Store};
 use crate::knowledge::{self, phrase, verify, Fact, Rel, Source, Strike};
 use crate::wordnet::{Pos, WordNet, LEX_PERSON};
@@ -47,7 +49,8 @@ pub enum Ask {
     Tell { key: String, value: String },
     Recall { key: Option<String> },
     RecallSaid,
-    IsA { x: Topic, y: Topic },
+    /// is X a Y; `why` asks for the steps ("why is a penguin a bird")
+    IsA { x: Topic, y: Topic, why: bool },
     RelOf { class: String, y: Topic },
     Opposite { x: Topic },
     About { q: QWord, topics: Vec<Topic>, unknown: Vec<String> },
@@ -64,7 +67,24 @@ pub enum Ask {
     Refuse { words: Vec<String> },
     /// a message about wanting to die
     Care,
+    /// tell me more: the last question again, wider
+    More,
+    /// which is better, X or Y: no ranking, a comparison
+    Rank { things: Vec<Topic> },
     Nothing,
+}
+
+/// What Aurelia reasons from a node if its ring peaks.
+#[derive(Clone, Debug)]
+pub enum Plan {
+    /// a thing is its familiar kind, through the chain of kinds
+    Identity { thing: Topic, path: Vec<infer::Key> },
+    /// what is said of a kind holds for the thing
+    Inherit { thing: Topic, path: Vec<infer::Key>, prem: infer::Premise },
+    /// a place is in what its places are in
+    Place { thing: Topic, chain: Vec<infer::Key> },
+    /// two things meet at their nearest common kind; `mem` is what the user said of the first
+    Compare { a: Topic, b: Topic, pa: Vec<infer::Key>, pb: Vec<infer::Key>, mem: Option<u32> },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -99,6 +119,14 @@ pub struct Snapshot {
     pub branded: Vec<(u32, u32)>,
     #[serde(default)]
     pub say: Vec<(u32, Fact)>,
+    /// the thinking's memory of this talk: what was said, when the asker was last linked to,
+    /// and the last question about something (for "tell me more")
+    #[serde(default)]
+    pub said_before: Vec<String>,
+    #[serde(default)]
+    pub last_link_turn: u32,
+    #[serde(default)]
+    pub last_about: Option<String>,
 }
 
 pub struct Engine {
@@ -120,6 +148,13 @@ pub struct Engine {
     pub brand_dir: PathBuf,
     /// false for a replay: it must not write over the branded block
     pub persist: bool,
+    /// the last question about something, for "tell me more"
+    last_about: Option<Ask>,
+    last_about_msg: Option<String>,
+    /// what was said in this talk, not to be said again
+    said_before: std::collections::HashSet<String>,
+    /// the turn a reply last reached for what the user told about themselves
+    last_link_turn: u32,
     pub last: Option<Reply>,
 }
 
@@ -265,6 +300,10 @@ impl Engine {
             dir,
             brand_dir,
             persist: true,
+            last_about: None,
+            last_about_msg: None,
+            said_before: Default::default(),
+            last_link_turn: 0,
             last: None,
         };
         let knowledge = e.nodes.len() + e.store.items.len();
@@ -466,6 +505,160 @@ impl Engine {
         out.into_iter().map(|(i, c)| (s + i, c, self.item_fact(i, lemma))).collect()
     }
 
+    /// What can be reasoned about a thing: each premise that could peak, and what follows from it.
+    fn plan(&self, t: &Topic, q: QWord, plans: &mut HashMap<u32, Plan>, charge: &mut HashMap<u32, f32>) {
+        let key = (t.pos, t.offset);
+        let mut add = |plans: &mut HashMap<u32, Plan>, node: u32, c: f32, plan: Plan| {
+            if c > *charge.get(&node).unwrap_or(&0.0) {
+                charge.insert(node, c);
+                plans.insert(node, plan);
+            }
+        };
+        if q == QWord::Where {
+            let chain = infer::part_chain(&self.wn, key, 4);
+            if chain.len() >= 3 {
+                if let Some(&node) = self.node_of.get(chain.last().unwrap()) {
+                    add(plans, node, 1.0, Plan::Place { thing: t.clone(), chain });
+                }
+            }
+            return;
+        }
+        let up = infer::ancestors(&self.wn, key, 10);
+        if let Some(path) = infer::best_kind(&self.wn, &self.index, &up) {
+            if let Some(&node) = self.node_of.get(path.last().unwrap()) {
+                add(plans, node, 0.98, Plan::Identity { thing: t.clone(), path });
+            }
+        }
+        let s = self.nodes.len() as u32;
+        let mut n = 0;
+        'kinds: for path in &up {
+            let kind = self.wn.get(*path.last().unwrap()).map(|x| x.words[0].to_lowercase()).unwrap_or_default();
+            if infer::TOO_WIDE.contains(&kind.as_str()) {
+                continue;
+            }
+            for prem in infer::premises_of(&self.wn, &self.store, &self.index, &kind, 25) {
+                let (denied, known) = infer::checked(&self.wn, &self.store, &self.index, &t.lemma, &prem);
+                if denied {
+                    continue;
+                }
+                let surprise = (infer::surprise(&self.wn, path, &prem.pred) - if known { 0.3 } else { 0.0 }).max(0.0);
+                let node = s + prem.item;
+                let clean = if self.store.items[prem.item as usize].src == Src::Primo { 0.05 } else { 0.0 };
+                add(plans, node, 0.5 + 0.35 * surprise + clean, Plan::Inherit { thing: t.clone(), path: path.clone(), prem });
+                n += 1;
+                if n >= 600 {
+                    break 'kinds;
+                }
+            }
+        }
+        // what the user likes or has, met with this thing; not in every reply
+        let linked_lately = self.last_link_turn > 0 && self.turn < self.last_link_turn + 3;
+        for (i, f) in self.facts.iter().enumerate() {
+            if linked_lately {
+                break;
+            }
+            if f.rel != Rel::Memory || !matches!(f.subject.as_str(), "like" | "love" | "have") {
+                continue;
+            }
+            let (w, _) = tokens(&f.object[0]);
+            let found = self.topics(&w);
+            if std::env::var("AURELIA_TRACE").is_ok() {
+                eprintln!("memory {:?} -> {:?}", f.object, found);
+            }
+            let Some(m) = found.0.into_iter().find(|x| x.pos == Pos::N && x.offset != NO_SYNSET) else { continue };
+            if m.lemma == t.lemma {
+                continue;
+            }
+            let met = infer::meet(&self.wn, (m.pos, m.offset), key);
+            if std::env::var("AURELIA_TRACE").is_ok() {
+                eprintln!("meet {:?}", met.as_ref().map(|(a, b)| (a.len(), b.len())));
+            }
+            if let Some((pm, pt)) = met {
+                if pm.len() <= 6 && pt.len() <= 6 {
+                    add(plans, self.fact_node(i as u32), 0.97, Plan::Compare { a: m, b: t.clone(), pa: pm, pb: pt, mem: Some(i as u32) });
+                }
+            }
+        }
+    }
+
+    fn chain_ok(&self, path: &[infer::Key], sym: &[&str]) -> bool {
+        path.windows(2).all(|w| self.wn.get(w[0]).map(|s| s.ptrs.iter().any(|p| sym.contains(&p.sym.as_str()) && p.target == w[1])).unwrap_or(false))
+    }
+
+    /// The sentence a plan comes to, the steps it stands on, and whether every step checks.
+    #[allow(clippy::type_complexity)]
+    fn reason(&self, plan: &Plan, v: u8) -> Option<(String, String, bool, think::Kind, f32, usize, String)> {
+        let kinds = ["@", "@i"];
+        match plan {
+            Plan::Identity { thing, path } => {
+                let kind = infer::word(&self.wn, *path.last()?);
+                let text = format!("{} is {}{}.", infer::cap(&self.np(thing)), infer::np(&kind), infer::by_way(&self.wn, path));
+                Some((text, format!("transitivity of kinds: {path:?}"), self.chain_ok(path, &kinds), think::Kind::Identity, 0.0, 99, "identity".into()))
+            }
+            Plan::Inherit { thing, path, prem } => {
+                let it = self.store.items.get(prem.item as usize)?;
+                let again = infer::premise(&self.wn, it, prem.item).map(|p| p.pred == prem.pred && p.head == prem.head).unwrap_or(false);
+                let ok = again && self.chain_ok(path, &kinds);
+                let me = self.np(thing);
+                let kind = infer::np(&infer::word(&self.wn, *path.last()?));
+                let verb = infer::singular(&prem.verb.to_lowercase(), prem.plural);
+                let said = it.text.trim_end_matches('.').to_string();
+                let said_lc = {
+                    let mut c = said.chars();
+                    match c.next() {
+                        Some(f) => f.to_lowercase().collect::<String>() + c.as_str(),
+                        None => String::new(),
+                    }
+                };
+                let text = if v == 0 {
+                    format!("{} {} {}, because {} and {} is {}.", infer::cap(&me), verb, prem.pred, said_lc, me, kind)
+                } else {
+                    format!("{}, and {} is {}, so {} {} {} too.", said, me, kind, me, verb, prem.pred)
+                };
+                let steps = format!("premise {} · {} · {} (\"{}\"); kinds {path:?}", it.who, it.work, it.locator, it.text);
+                let kind_lemma = self.wn.get(*path.last()?).map(|s| s.words[0].to_lowercase()).unwrap_or_default();
+                let surprise = infer::surprise(&self.wn, path, &prem.pred);
+                let familiar = infer::familiar(&self.index, &kind_lemma);
+                let key = format!("{verb} {}", prem.pred).to_lowercase();
+                Some((text, steps, ok, think::Kind::Inference, surprise, familiar, key))
+            }
+            Plan::Place { thing, chain } => {
+                let names: Vec<String> = chain.iter().map(|k| infer::word(&self.wn, *k)).collect();
+                let mut text = format!("{} is in {}, because {} is in {}", infer::cap(&self.np(thing)), names.last()?, names[0], names[1]);
+                for w in names[1..].windows(2) {
+                    text.push_str(&format!(" and {} is in {}", w[0], w[1]));
+                }
+                text.push('.');
+                Some((text, format!("transitivity of places: {chain:?}"), self.chain_ok(chain, &["#p"]), think::Kind::Link, 0.0, 99, "place".into()))
+            }
+            Plan::Compare { a, b, pa, pb, mem } => {
+                let kind = knowledge::plural(&self.wn, &infer::word(&self.wn, *pa.last()?));
+                let how = |t: &Topic, p: &[infer::Key]| -> String {
+                    if p.len() > 2 {
+                        format!("{} is {}", self.np(t), infer::np(&infer::word(&self.wn, p[1])))
+                    } else {
+                        format!("{} is one directly", self.np(t))
+                    }
+                };
+                let mut ok = self.chain_ok(pa, &kinds) && self.chain_ok(pb, &kinds);
+                let core = format!("{} and {} are both {}: {}, {}.", self.np(a), self.np(b), kind, how(a, pa), how(b, pb));
+                let text = match mem {
+                    Some(i) => {
+                        let f = self.facts.get(*i as usize)?;
+                        ok &= verify(&self.wn, f);
+                        let name = self.facts.iter().rev().find(|x| x.rel == Rel::Memory && x.subject == "name").map(|x| x.object[0].clone());
+                        match name {
+                            Some(n) => format!("You {} {}, {}, and {}", f.subject, f.object[0], n, core),
+                            None => format!("You {} {}, and {}", f.subject, f.object[0], core),
+                        }
+                    }
+                    None => infer::cap(&core),
+                };
+                Some((text, format!("nearest common kind: {pa:?} / {pb:?}"), ok, think::Kind::Link, 0.0, 99, format!("compare {}", self.np(a))))
+            }
+        }
+    }
+
     /// Book sentences on an act that speak of right and wrong.
     fn moral_items(&self, lemma: &str) -> Vec<(u32, f32, Fact)> {
         const MORAL: &[&str] = &["wrong", "evil", "good", "virtue", "vice", "duty", "just", "unjust", "right", "sin", "wicked", "moral", "ought"];
@@ -510,6 +703,68 @@ impl Engine {
         self.look_as(words, order)
     }
 
+    /// Which sense a word is in: the one whose kinds the world knowledge uses when it
+    /// speaks of the word ("whale" -> the mammal, not "a very large person"); the
+    /// most common sense when it says nothing.
+    fn sense(&self, lemma: &str, pos: Pos) -> Option<u32> {
+        let senses = self.wn.senses(lemma, pos);
+        if senses.len() < 2 || pos != Pos::N {
+            return senses.first().cloned();
+        }
+        let texts: Vec<String> = self
+            .index
+            .get(lemma)
+            .map(|e| {
+                e.iter()
+                    .filter(|(_, r)| matches!(r, Role::Article | Role::InArticle))
+                    .take(200)
+                    .map(|(i, _)| self.store.items[*i as usize].text.to_lowercase())
+                    .collect()
+            })
+            .unwrap_or_default();
+        if texts.is_empty() {
+            return senses.first().cloned();
+        }
+        let mut best = (0usize, senses[0]);
+        for (rank, &off) in senses.iter().enumerate() {
+            // the sense's kinds, its own kinds below it, and the words of its gloss
+            let mut cues: std::collections::HashSet<String> = std::collections::HashSet::new();
+            for path in infer::ancestors(&self.wn, (pos, off), 4) {
+                if let Some(s) = self.wn.get(*path.last().unwrap()) {
+                    cues.extend(s.words.iter().map(|w| w.to_lowercase().replace('_', " ")));
+                }
+            }
+            let mut below = vec![(pos, off)];
+            for _ in 0..3 {
+                let mut next = Vec::new();
+                for k in &below {
+                    if let Some(s) = self.wn.get(*k) {
+                        for p in s.ptrs.iter().filter(|p| p.sym == "~" || p.sym == "~i") {
+                            if let Some(t) = self.wn.get(p.target) {
+                                cues.extend(t.words.iter().map(|w| w.to_lowercase().replace('_', " ")));
+                            }
+                            next.push(p.target);
+                        }
+                    }
+                }
+                below = next;
+            }
+            cues.remove(lemma);
+            let mut hits = 2 * cues.iter().filter(|w| texts.iter().any(|t| t.contains(w.as_str()))).count();
+            // the gloss's words count, but less than the kinds: they share words with every sense's article
+            if let Some(s) = self.wn.get((pos, off)) {
+                let gloss: std::collections::HashSet<String> =
+                    s.gloss.split(|c: char| !c.is_alphabetic()).filter(|w| w.len() >= 5).map(|w| w.to_lowercase()).filter(|w| w != lemma).collect();
+                hits += gloss.iter().filter(|w| texts.iter().any(|t| t.contains(w.as_str()))).count();
+            }
+            // a later sense must show clearly more to win over a more common one
+            if hits > best.0 + 2 * rank.min(1) {
+                best = (hits, off);
+            }
+        }
+        Some(best.1)
+    }
+
     fn look_as(&self, words: &[String], order: &[Pos]) -> Option<Topic> {
         if words.is_empty() {
             return None;
@@ -517,7 +772,7 @@ impl Engine {
         let phrase = words.join("_");
         for &pos in order {
             if let Some(lemma) = self.wn.base(&phrase, pos) {
-                if let Some(&offset) = self.wn.senses(&lemma, pos).first() {
+                if let Some(offset) = self.sense(&lemma, pos) {
                     return Some(Topic { lemma, pos, offset });
                 }
             }
@@ -532,15 +787,35 @@ impl Engine {
 
     /// Content words, longest phrases first (three, two, one word).
     fn topics(&self, words: &[String]) -> (Vec<Topic>, Vec<String>) {
-        let content: Vec<String> = words.iter().filter(|w| !STOP.contains(&w.as_str())).cloned().collect();
+        // a phrase never runs over a left-out word: "cats or dogs" is two things, not "Cats & Dogs"
+        let mut content: Vec<String> = Vec::new();
+        for w in words {
+            if STOP.contains(&w.as_str()) {
+                if content.last().map(|x| x != "|").unwrap_or(false) {
+                    content.push("|".into());
+                }
+            } else {
+                content.push(w.clone());
+            }
+        }
+        while content.last().map(|x| x == "|").unwrap_or(false) {
+            content.pop();
+        }
         // "when did Rome fall": after do/does/did the question ends on its verb
         let verb_last = words.len() > 2 && matches!(words[1].as_str(), "do" | "does" | "did");
         let mut topics = Vec::new();
         let mut unknown = Vec::new();
         let mut i = 0;
         while i < content.len() {
+            if content[i] == "|" {
+                i += 1;
+                continue;
+            }
             let mut took = 0;
             for len in (1..=3.min(content.len() - i)).rev() {
+                if content[i..i + len].iter().any(|x| x == "|") {
+                    continue;
+                }
                 let last = verb_last && i + len == content.len() && len == 1;
                 let found = if last { self.look_as(&content[i..i + len], &[Pos::V, Pos::N, Pos::A, Pos::R]) } else { self.look(&content[i..i + len], true) };
                 if let Some(t) = found {
@@ -576,6 +851,10 @@ impl Engine {
         let (all, _) = tokens(msg);
         if ethics::harms_people(&all) {
             return Ask::Refuse { words: all };
+        }
+        // a greeting is read before the talk's fillers are taken away ("hey there")
+        if all.len() <= 3 && all.first().map(|w| matches!(w.as_str(), "hello" | "hi" | "hey" | "greetings" | "moi" | "terve" | "yo" | "howdy")).unwrap_or(false) {
+            return Ask::Greet;
         }
         let mut sentences: Vec<(String, bool)> = Vec::new();
         let mut cur = String::new();
@@ -645,10 +924,20 @@ impl Engine {
             return Ask::Moral { words, acts };
         }
         if w.iter().any(|x| OPINION.contains(&x.as_str())) || s.contains("do you like") || s.contains("do you think") {
+            // no ranking, but two things can still be compared
+            let rest: Vec<String> = w.iter().filter(|x| !OPINION.contains(&x.as_str())).cloned().collect();
+            let (topics, _) = self.topics(&rest);
+            let things: Vec<Topic> = topics.into_iter().filter(|t| t.pos == Pos::N && t.offset != NO_SYNSET).collect();
+            if things.len() >= 2 {
+                return Ask::Rank { things };
+            }
             return Ask::Opinion;
         }
         if question && (w.iter().any(|x| NOW.contains(&x.as_str())) || s.starts_with("what time") || s.starts_with("what day") || s.starts_with("what date")) {
             return Ask::Now;
+        }
+        if matches!(s.as_str(), "tell me more" | "more" | "go on" | "and" | "what else" | "tell me more about it" | "anything else" | "keep going") {
+            return Ask::More;
         }
         if s.starts_with("tell me something") || s.starts_with("tell me a fact") || s.starts_with("say something") || s == "surprise me" {
             return Ask::Something;
@@ -743,9 +1032,11 @@ impl Engine {
                 }
             }
         }
-        // is X a Y
-        if matches!(w[0].as_str(), "is" | "are") && w.len() >= 3 {
-            let rest = &w[1..];
+        // is X a Y, why is X a Y
+        let why = w[0] == "why" && w.len() > 1 && matches!(w[1].as_str(), "is" | "are");
+        let off = why as usize;
+        if matches!(w[off].as_str(), "is" | "are") && w.len() >= 3 + off {
+            let rest = &w[1 + off..];
             let mut splits: Vec<usize> = (1..rest.len()).filter(|&k| matches!(rest[k].as_str(), "a" | "an" | "the")).collect();
             splits.extend(1..rest.len());
             for k in splits {
@@ -755,7 +1046,7 @@ impl Engine {
                 }
                 if let (Some(x), Some(y)) = (self.look(&l, true), self.look(&r, true)) {
                     if x.pos == Pos::N && y.pos == Pos::N {
-                        return Ask::IsA { x, y };
+                        return Ask::IsA { x, y, why };
                     }
                 }
             }
@@ -861,13 +1152,26 @@ impl Engine {
 
     pub fn answer(&mut self, msg: &str, seed: u64, viz: Option<&mut dyn FnMut(&Block, u32, u32)>) -> Result<Reply> {
         self.turn += 1;
-        let ask = self.read(msg);
+        let mut ask = self.read(msg);
+        let mut more = 0;
+        if matches!(ask, Ask::More) {
+            // "tell me more": the same question again, a wider budget, nothing said twice
+            ask = self.last_about.clone().unwrap_or(Ask::Nothing);
+            more = 2;
+        }
+        let about_before = self.last_about_msg.clone();
+        if matches!(ask, Ask::About { .. }) {
+            self.last_about = Some(ask.clone());
+            self.last_about_msg = Some(msg.to_string());
+        }
         let said = self.turn_fact(Rel::Said, "you:said", "you", vec![msg.trim().to_string()], msg.trim());
         let said_id = self.brand(said);
 
         // which branded nodes to charge, what each says, how many rings to read
         let mut charge: HashMap<u32, f32> = HashMap::new();
         let mut say: HashMap<u32, Fact> = HashMap::new();
+        // what Aurelia reasons from a charged node, if it peaks
+        let mut plans: HashMap<u32, Plan> = HashMap::new();
         let put = |charge: &mut HashMap<u32, f32>, say: &mut HashMap<u32, Fact>, node: u32, c: f32, f: Option<Fact>| {
             if c > *charge.get(&node).unwrap_or(&0.0) {
                 charge.insert(node, c);
@@ -906,7 +1210,7 @@ impl Engine {
                 before.push("Goodbye. The wave keeps rolling.".into());
                 reading = false;
             }
-            Ask::Nothing => {
+            Ask::Nothing | Ask::More => {
                 before.push("I don't know what you are asking.".into());
                 reading = false;
             }
@@ -962,7 +1266,7 @@ impl Engine {
                 origin = Some(self.home("you:said"));
                 take = 2;
             }
-            Ask::IsA { x, y } => {
+            Ask::IsA { x, y, .. } => {
                 origin = topic_ring(self, x);
                 match knowledge::chain(&self.wn, (x.pos, x.offset), &y.lemma) {
                     Some(path) => {
@@ -1058,6 +1362,25 @@ impl Engine {
                 origin = acts.first().and_then(|a| topic_ring(self, a)).or(Some(self.home("ethic:0")));
                 take = if hit.is_empty() { 2 } else { 2.min(hit.len() + 1) };
             }
+            Ask::Rank { things } => {
+                before.push("I can't rank them, but I can compare them.".into());
+                let (a, b) = (&things[0], &things[1]);
+                origin = topic_ring(self, a);
+                if let Some((pa, pb)) = infer::meet(&self.wn, (a.pos, a.offset), (b.pos, b.offset)) {
+                    if let Some(&node) = self.node_of.get(pa.last().unwrap()) {
+                        plans.insert(node, Plan::Compare { a: a.clone(), b: b.clone(), pa, pb, mem: None });
+                        put(&mut charge, &mut say, node, 1.0, None);
+                    }
+                }
+                for t in [a, b] {
+                    for (n, f) in self.topic_facts(t, &t.lemma) {
+                        if f.rel == Rel::Def {
+                            put(&mut charge, &mut say, n, 0.6, Some(f));
+                        }
+                    }
+                }
+                take = 3;
+            }
             Ask::Opinion => {
                 before.push("I can't judge that. All I hold is what the word network and you have told me, and none of it is an opinion. Ask me what one of them is.".into());
                 reading = false;
@@ -1100,28 +1423,30 @@ impl Engine {
                 }
                 let mut gap: Option<String> = None;
                 for t in topics {
-                    let lexfile = self.wn.get((t.pos, t.offset)).map(|s| s.lexfile).unwrap_or(0);
-                    // what people have thought about it: the philosophers, for an abstract word
-                    let abstract_ = matches!(lexfile, 4 | 7 | 9 | 12 | 16 | 26);
-                    for (n, c, f) in self.item_charges(&t.lemma, *q, abstract_) {
-                        put(&mut charge, &mut say, n, c, Some(f));
+                    if t.offset == NO_SYNSET {
+                        // known only from the world knowledge: nothing to reason from, so what it says
+                        for (n, c, f) in self.item_charges(&t.lemma, *q, false) {
+                            put(&mut charge, &mut say, n, c, Some(f));
+                        }
+                    } else {
+                        self.plan(t, *q, &mut plans, &mut charge);
                     }
                     let facts = self.topic_facts(t, &t.lemma);
                     let rels: Vec<Rel> = facts.iter().map(|(_, f)| f.rel).collect();
                     let lexfile = self.wn.get((t.pos, t.offset)).map(|s| s.lexfile).unwrap_or(0);
                     for (n, f) in facts {
+                        // the dictionary only when nothing can be reasoned: below every premise
                         let c = match q {
                             QWord::Where => match f.rel {
-                                Rel::PartOf => 1.0,
-                                Rel::Def => 0.85,
+                                Rel::PartOf => 0.6,
+                                Rel::Def => 0.5,
                                 _ => 0.0,
                             },
-                            QWord::Who => match f.rel {
-                                Rel::Def => 1.0,
-                                Rel::InstanceOf | Rel::IsA => 0.9,
-                                _ => 0.4,
+                            _ => match f.rel {
+                                Rel::Def => 0.5,
+                                Rel::Antonym | Rel::HasPart => 0.45,
+                                _ => 0.0,
                             },
-                            _ => w(f.rel),
                         };
                         if c > 0.0 {
                             put(&mut charge, &mut say, n, c, Some(f));
@@ -1138,7 +1463,17 @@ impl Engine {
                         _ => {}
                     }
                 }
-                take = (3 * topics.len()).min(5);
+                // two things asked together meet at their nearest common kind
+                if topics.len() >= 2 && topics[0].offset != NO_SYNSET && topics[1].offset != NO_SYNSET {
+                    let (a, b) = (&topics[0], &topics[1]);
+                    if let Some((pa, pb)) = infer::meet(&self.wn, (a.pos, a.offset), (b.pos, b.offset)) {
+                        if let Some(&node) = self.node_of.get(pa.last().unwrap()) {
+                            plans.insert(node, Plan::Compare { a: a.clone(), b: b.clone(), pa, pb, mem: None });
+                            put(&mut charge, &mut say, node, 1.0, None);
+                        }
+                    }
+                }
+                take = if topics.len() >= 2 { 3 } else { 3 };
                 if let Some(g) = gap {
                     before.push(format!("{g} What I do know:"));
                     take = topics.len().min(2);
@@ -1149,7 +1484,12 @@ impl Engine {
         for p in self.block.parts.iter_mut() {
             p.charge = p.fact.and_then(|n| charge.get(&n).cloned()).unwrap_or(0.0);
         }
-        let snapshot = self.save_snapshot(&say)?;
+        let base = match &ask {
+            Ask::About { .. } => 2,
+            _ => take,
+        };
+        let budget = think::budget(msg, base) + more;
+        let snapshot = self.save_snapshot(&say, about_before)?;
         let origin = origin.unwrap_or_else(|| self.home("you:said"));
         let mut b = std::mem::replace(&mut self.block, Block::new(Cfg { nx: 2, ny: 2, nz: 1, ..Default::default() }));
         b.stir(seed);
@@ -1187,11 +1527,14 @@ impl Engine {
         peaked.sort_by_key(|&r| (b.peak[r], r));
         let mut read = Vec::new();
         let mut said_keys = std::collections::HashSet::new();
-        let mut sentences = Vec::new();
+
         let mut rings_read = 0;
+        // the wave brings up more than is said: a pool of thoughts, weighed before answering
+        let mut thoughts: Vec<think::Thought> = Vec::new();
+        let pool = (take.max(budget) * 3).max(6);
         if reading {
             for &r in peaked.iter().rev() {
-                if rings_read == take {
+                if rings_read == pool {
                     break;
                 }
                 // a ring says what its most charged particle holds
@@ -1203,6 +1546,17 @@ impl Engine {
                 let mut any = false;
                 for (j, c) in held {
                     let n = b.parts[j].fact.unwrap();
+                    let v = ((b.parts[j].dir * b.omega[r].signum()) < 0.0) as u8;
+                    if let Some(plan) = plans.get(&n) {
+                        if let Some((text, steps, ok, kind, surprise, familiar, key)) = self.reason(plan, v) {
+                            pr.facts.push((n, c, steps, text.clone(), ok));
+                            if said_keys.insert(text.clone()) {
+                                thoughts.push(think::Thought { text, kind, peak: b.peak[r], charge: c, surprise, familiar, key, ok });
+                                any = true;
+                            }
+                        }
+                        continue;
+                    }
                     let f = if n < talk { say.get(&n) } else { self.facts.get((n - talk) as usize) };
                     let Some(f) = f else { continue };
                     let ok = match &f.strike.source {
@@ -1224,8 +1578,9 @@ impl Engine {
                         format!("talk fact {}", n - talk)
                     };
                     pr.facts.push((n, c, format!("{node} · {:?}", f.strike), text.clone(), ok));
-                    if ok && said_keys.insert(f.key()) {
-                        sentences.push(text);
+                    if said_keys.insert(f.key()) {
+                        let kind = if matches!(f.rel, Rel::Memory | Rel::Ethic | Rel::SelfNote | Rel::Chain | Rel::RelOf) { think::Kind::Link } else { think::Kind::Fact };
+                        thoughts.push(think::Thought { text, kind, peak: b.peak[r], charge: c, surprise: 0.0, familiar: 99, key: f.key(), ok });
                         any = true;
                     }
                 }
@@ -1236,8 +1591,31 @@ impl Engine {
             }
         }
         read.reverse();
+        // think before answering: keep what the question needs, drop the rest, say why in /why
+        let verdict = think::think(thoughts, budget, &self.said_before);
+        let mut sentences = verdict.kept;
+        if let Ask::IsA { why: true, .. } = &ask {
+            // why: the same chain, given as the reason
+            for s in sentences.iter_mut() {
+                if let Some(rest) = s.strip_prefix("Yes: ") {
+                    *s = format!("Because {rest}");
+                } else if let Some(rest) = s.strip_prefix("Yes, ") {
+                    *s = format!("Because {rest}");
+                }
+            }
+        }
+        if sentences.iter().any(|s| s.starts_with("You like") || s.starts_with("You love") || s.starts_with("You have")) {
+            self.last_link_turn = self.turn;
+        }
+        for s in sentences.iter().chain(verdict.kept_keys.iter()) {
+            self.said_before.insert(s.clone());
+        }
+        if let Some(pr) = read.last_mut() {
+            for (text, why) in &verdict.dropped {
+                pr.facts.push((u32::MAX, 0.0, format!("thought dropped: {why}"), text.clone(), false));
+            }
+        }
         let iv = sentences.len();
-        sentences.reverse();
         let mut parts = before.clone();
         if reading && iv == 0 {
             if before.is_empty() {
@@ -1273,12 +1651,22 @@ impl Engine {
 
     /// What a replay needs: the talk's branding as it was before this wave, and what the
     /// charged WordNet nodes were to say (WordNet's own branding is in brand/).
-    fn save_snapshot(&self, say: &HashMap<u32, Fact>) -> Result<String> {
+    fn save_snapshot(&self, say: &HashMap<u32, Fact>, about_before: Option<String>) -> Result<String> {
         std::fs::create_dir_all(&self.dir)?;
         let s = self.talk_base();
         let branded: Vec<(u32, u32)> =
             self.block.parts.iter().enumerate().filter_map(|(i, p)| p.fact.filter(|&n| n >= s).map(|n| (i as u32, n))).collect();
-        let snap = Snapshot { turn: self.turn - 1, facts: self.facts.clone(), branded, say: say.iter().map(|(k, v)| (*k, v.clone())).collect() };
+        let mut said_before: Vec<String> = self.said_before.iter().cloned().collect();
+        said_before.sort();
+        let snap = Snapshot {
+            turn: self.turn - 1,
+            facts: self.facts.clone(),
+            branded,
+            say: say.iter().map(|(k, v)| (*k, v.clone())).collect(),
+            said_before,
+            last_link_turn: self.last_link_turn,
+            last_about: about_before,
+        };
         let name = format!("snap-{:04}.json", self.turn);
         std::fs::write(self.dir.join(&name), serde_json::to_vec(&snap)?)?;
         Ok(name)
@@ -1300,6 +1688,10 @@ impl Engine {
             self.slot.insert(n, p as usize);
         }
         self.turn = snap.turn;
+        self.said_before = snap.said_before.into_iter().collect();
+        self.last_link_turn = snap.last_link_turn;
+        self.last_about_msg = snap.last_about.clone();
+        self.last_about = snap.last_about.map(|m| self.read(&m));
     }
 
     fn log(&self, r: &Reply) -> Result<()> {

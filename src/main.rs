@@ -8,8 +8,10 @@
 mod block;
 mod engine;
 mod ethics;
+mod infer;
 mod knowledge;
 mod store;
+mod think;
 mod wordnet;
 
 use anyhow::{bail, Context, Result};

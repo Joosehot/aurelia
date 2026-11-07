@@ -12,6 +12,7 @@ Writes knowledge/world.tsv (Wikipedia and Primo) and knowledge/books.tsv (every 
 of every book, with its paragraph). Aurelia brands both into its block the first time it
 starts (aurelia's brand/), and never again.
 """
+import json
 import os
 import re
 import sqlite3
@@ -35,13 +36,17 @@ def world():
     db = sqlite3.connect(os.path.join(DEVIL, "state", "base", "nodes.sqlite"))
     n = 0
     with open(os.path.join(OUT, "world.tsv"), "w", encoding="utf-8", newline="\n") as f:
-        f.write("id\tsource\twork\tlocator\tkind\tsubj\ttext\n")
+        f.write("id\tsource\twork\tlocator\tkind\tsubj\ttext\tverb\trel\tneg\tpred\n")
         rows = db.execute("select id, thinker, work, locator, kind, prop, text from nodes "
                           "where thinker in ('Wikipedia', 'Primo') order by id")
         for id_, thinker, work, loc, kind, prop, text in rows:
-            m = re.search(r'"subj": "((?:[^"\\]|\\.)*)"', prop or "")
-            subj = m.group(1) if m else ""
-            f.write("\t".join([str(id_), thinker, clean(work), clean(loc), kind, clean(subj), clean(text)]) + "\n")
+            try:
+                p = json.loads(prop or "{}")
+            except ValueError:
+                p = {}
+            f.write("\t".join([str(id_), thinker, clean(work), clean(loc), kind, clean(p.get("subj", "")), clean(text),
+                               clean(p.get("verb", "")), clean(p.get("rel", "")), "1" if p.get("neg") else "0",
+                               clean(p.get("pred", ""))]) + "\n")
             n += 1
     return n
 

@@ -4,220 +4,215 @@ This folder holds two things:
 
 - **Aurelia** (the Rust crate at the top, `src/`): a conversational engine
   built from a 3D block of ring accelerators. It uses no LLM and no neural
-  network. It answers only from knowledge branded into its particles.
+  network. All knowledge is branded into its particles once, and it answers
+  by reasoning from what the wave brings up.
 - **The particle maker** ([`particle_maker/`](particle_maker/README.md),
   Python): a stirred rice bowl whose friction forms artificial particles. It
-  is a separate program and is used like this:
+  is a separate program:
   `python -m particle_maker run --minutes 2 --stir spiral --seed 42`.
 
 The rest of this file is about Aurelia.
 
 ```
+.venv\Scripts\python.exe tools\export_knowledge.py   # once: knowledge/ from what is on the machine
 cargo build --release
-target\release\aurelia chat            # talk; /why shows the last answer's rings; /quit
+target\release\aurelia chat            # talk; /why shows the last answer's rings and thoughts; /quit
 target\release\aurelia chat --viz      # the same, with the block drawn as the wave passes
-target\release\aurelia ask "What is a dog?" "Is a dog an animal?"   # lines as one conversation
-target\release\aurelia debug           # which rings peaked and what they held, last answer
-target\release\aurelia replay runs\chat\<run> <n>                   # replay answer n exactly
+target\release\aurelia ask "What is a wolf?" "tell me more"    # lines as one conversation
+target\release\aurelia debug           # the last answer: rings, premises, strikes, dropped thoughts
+target\release\aurelia replay runs\chat\<run> <n>              # replay answer n exactly
 cargo test --release                   # particles never destroyed; collisions are clockwork
 ```
 
-Settings are in `aurelia.toml`. The word network is Prim's: WordNet 3.1 as
-`Primogenitus/motor/data/wordnet/dict` keeps it. Aurelia only reads that
-folder.
+Settings are in `aurelia.toml`. The first start brands the block, which
+takes a few seconds, and keeps it in `brand/`. Every later start loads it.
 
-**Why Rust:** Prim and its word network are Rust. The block has 17 672 rings
-and 53 016 particles, and one answer's wave takes 330–350 steps. In Rust on
-the CPU that is about 0.85 s per answer, with about 2.3 million collisions.
-The machine has an RTX 4070, but Aurelia does not use the GPU, because
-the CPU is fast enough. The collisions are sequential (each one changes the
-next), and that is also what makes every answer exactly replayable from its
-seed.
+**Why Rust, and the GPU:** Prim and its word network are Rust. The block
+has 1.14 million particles. Its layers turn in parallel on the CPU's 12
+threads, because rings touch only inside their layer, so the result is the
+same on any thread count. One answer takes about 3.5 s. The RTX 4070 is not
+used.
 
-## 1. The grid
+## 1. The grid, the particles, the clockwork
 
-The lattice has 48 × 48 × 8 points. Every four neighbouring points of a
-layer are one **ring accelerator**: the circle through those four corners.
-That gives 47 × 47 rings per layer, in 8 stacked layers. Particles on a ring
-pass its corners at 45°, 135°, 225° and 315°. A corner point is shared by up
-to four rings, and that is where rings touch.
+- **The lattice** has 96 × 96 × 42 points. Every four neighbouring points of
+  a layer form a ring accelerator, the circle through those corners. That
+  gives 379 050 rings with 3 particles each.
+- **Spin.** Rings spin in a seeded checkerboard pattern, with 15% of them
+  turning the other way. Stacked rings share spin through an axle.
+- **Collisions.** Rings touch at shared corners. When two particles meet
+  there, both bounce back (their direction flips), some lift passes between
+  them with the sum kept, and their spins mesh with ω_a − ω_b kept.
+- **Nothing is destroyed.** Particles are never destroyed and never fused.
+  The tests check this.
 
-- **Spin.** Each ring turns at its own pace. The directions alternate like a
-  checkerboard (so neighbours mesh like gears), and a seeded 15% turn the
-  other way. Each answer's seed varies every pace by ±30%.
-- **Layers.** Stacked rings share spin through an "axle" (2% per step).
+## 2. Branding: everything once
 
-## 2. Particles and clockwork
+Each item below is branded onto **a particle of its own, once**:
 
-Each ring carries 3 particles that orbit with it. A particle has an angle, a
-direction (with its ring or against it), a lift (how far it has risen toward
-its ring's limit) and possibly a branded fact.
-
-When a particle passes a corner and another ring's particle is at the same
-corner (within 0.15 rad), they collide. A collision is clockwork:
-
-- both particles **bounce back**: their directions flip;
-- **lift passes** from the higher particle to the lower one (8% of the
-  difference), so the total stays the same;
-- the two rings' **spins mesh**: both are pushed toward turning against each
-  other, while ω_a − ω_b stays the same.
-
-Nothing is ever destroyed or fused. The particle array never changes length.
-A collision passes only direction, lift and spin, and a particle's branded
-fact never changes. `cargo test` checks this over five seeds
-(`particles_are_never_destroyed`, `a_collision_is_clockwork`,
-`rings_touch_at_shared_corners`).
-
-## 3. Knowledge by branding, with a lightning strike
-
-Nothing is trained. A fact is **branded** onto particles when the
-conversation first needs it.
-
-- **Knowledge** comes from the word network, from the first (most common)
-  sense of a word. That covers the definition, kind of (hypernym), instance
-  of, part of, member of, has parts, other words for it, the opposite, and
-  example sentences.
-- **Derived knowledge** is also branded. "Is X a Y" gets the shortest
-  hypernym chain from X up to Y. "The R of Y" gets a part of Y that is a
-  kind of R (the capital of France: Paris is a part of France and a kind of
-  capital).
-- **Memory nodes** are what was said: every line the user says, and what the
-  user tells about themselves ("my X is Y", "I am / like / love / have / live
-  in …", "call me …").
-
-Every fact is branded together with its **lightning strike**: a link to
-where it came from (the synset, the chain of synsets, or the user's exact
-line), plus the turn and the word that brought it. Before a fact may be
-said, Aurelia derives it again from its strike, and a fact that doesn't come
-out the same is not said (`/why` marks it `FAILED CHECK`). So an answer can
-only hold facts that come from WordNet or from the conversation. The
-phrasing rules add only connecting words.
-
-Each fact is branded onto **3 particles**, each on a ring of its own, at the
-free rings nearest the word's home ring (a hash of the word). The facts of
-one word therefore sit together. Particles are never re-used for something
-else while there is room, and memory is never overwritten.
-
-## 4. The wave, and how a message enters (the design chosen)
-
-1. **The message is read whole** into one ask: what is X, who, where,
-   when/why/how, is X a Y, the R of Y, the opposite of X, something about
-   me, what did I say, about Aurelia itself, or a greeting. The words it
-   asks about are found in the word network (phrases of three words first,
-   then two, then one; base forms by WordNet's own rules).
-2. **The message brands** the knowledge of those words, if it isn't there
-   yet, and charges the particles that answer the ask. A definition gets
-   charge 1.0, kind-of 0.9, part-of 0.8, and so on. For "where", part-of
-   gets 1.0; for "is X a Y", the chain alone.
-3. **The charge sets the ring's limit**: limit = 1 + 4 × the highest charge
-   on the ring. An uncharged ring has limit 1.
-4. **The message sets where the wave starts**: at the home ring of the first
-   word it asks about.
-5. **The wave rolls.** Before it, the block turns on its own for 120 steps
-   (seeded). Then a train of 12 spherical fronts leaves the start, 24 steps
-   apart, at 0.7 rings per step. A front passing a ring spins it up. Spin
-   above a ring's own pace lifts its particles toward the ring's limit (half
-   as fast for a particle running against its ring). Collisions spread spin
-   and lift sideways through the block.
-
-## 5. Reading the answer
-
-When the last front has passed the far end of the block, the reading
-begins.
-
-- Uncharged rings (limit 1) peak early. The rings that rise to their limit
-  **last** are the charged ones with the highest limits.
-- The reply is read from the last charged rings to peak, in the order they
-  peaked: 2 per word asked about (4 at most), or 1 for a one-answer ask.
-- Each fact is checked against its strike and said once. The wording (one
-  of two per kind of fact) is set by the particle at that moment: whether it
-  runs with its ring or against it.
-- When a ring holding the most charged fact gets drained by its neighbours
-  and doesn't reach its limit in time, it isn't read. Then the answer shifts
-  to another angle.
-
-The same question gives different answers because the paces, the angles and
-the 120 steps of the block's own turning come from a fresh seed each time.
-Each reply logs its seed and a snapshot of the branded block
-(`runs/chat/<run>/replies.jsonl`, `snap-NNNN.json`), and `aurelia replay`
-gives the same answer again. This was checked on two answers.
-
-When nothing holds an answer, Aurelia says so:
-
-- a word in neither the word network nor the talk gets *I don't know what
-  "X" is*;
-- a question the knowledge cannot answer (who for a thing, when, why, how,
-  where for something with no "part of") gets *I don't know when. What I do
-  know: …*;
-- something asked about the user that the user hasn't told gets *You
-  haven't told me*;
-- "is X a Y" with no chain gets *I have nothing that says …*. Aurelia never
-  says "no" here, because the network not holding it is not evidence.
-
-## 6. The test chat (10 questions, fresh seeds, after development)
-
-The settings were developed on other questions (cat, Rome, Newton, Italy,
-cold). After that, this conversation was run once with fresh seeds, and
-nothing was changed because of it.
-
-| asked | Aurelia | |
+| what | how many | from |
 |---|---|---|
-| Hello! | Hello. Ask me about a word, or tell me something about yourself. | greeting rule |
-| What is a dog? | Dogs are a kind of domestic animal. Parts of a dog include a flag. | true to WordNet; "flag" is WordNet's word for a dog's tail |
-| What is a dog? | A dog is a kind of canine. Parts of a dog include a flag. | another angle; no definition either time |
-| Is a dog an animal? | Yes, dogs are animals (by way of domestic animal). | the chain, checked |
-| Who was Albert Einstein? | Albert Einstein is one of the physicists. Albert Einstein: physicist born in Germany who formulated the special theory of relativity … (1879-1955). | |
-| What is the capital of France? | The capital of France is Paris. | derived: part of France and a kind of capital |
-| My name is Joose. → What is my name? | I'll remember that. Your name is Joose. → Your name is Joose. | memory |
-| Who won the 2022 World Cup? | I don't know who. What I do know: About a won: the basic unit of money in South Korea. World Cup is a kind of tournament. | honest about who, but "won" was read as the Korean money |
-| What is a quantum blockchain? | I don't know "blockchain". Quanta are a kind of quantity. A quantum is a discrete amount … | honest about "blockchain", but it answers about "quantum" alone |
-| Where is Helsinki? | Helsinki is the capital and largest city of Finland; … Helsinki is in Finland. | |
-| What does happy mean? | Unhappy is the opposite of happy. Happy means enjoying or showing or marked by joy or pleasure. | |
+| WordNet senses | 117 791 | Prim's word network (Primogenitus/motor/data/wordnet) |
+| Simple English Wikipedia propositions | 759 703 | Devil's Clockwork `state/base/nodes.sqlite` (every clause Devil read from the dump, with article and paragraph) |
+| Primo's word network as sentences | 96 276 | the same database (Primo's facts.tsv as Devil said them) |
+| sentences of the 39 philosophy books | 90 571 | Devil's `corpus/raw` (Project Gutenberg) |
+| the moral core | 12 principles | hardcoded in `src/ethics.rs` |
 
-No fact was invented: every fact said is in WordNet or was said by the
-user, and every one passed its strike check.
+`tools/export_knowledge.py` reads Devil's files without writing to them, and
+writes `knowledge/`.
+
+- **Placement.** The nodes are sorted by the word they are about and laid
+  along a Morton curve through the block, so everything about one word sits
+  together. Every 17th particle stays free for what the conversation brands.
+- **The lightning strike.** Every node carries one: a link to its source (a
+  synset, a store row with its article or book and paragraph, a line of the
+  moral core, or the user's exact words).
+- **Memory nodes.** What the user says, and what they tell about
+  themselves, is branded the same way. It stays in `brand/` between
+  conversations.
+
+## 3. Reasoning: the knowledge is premises
+
+Aurelia doesn't recite Wikipedia. The wave brings premises up, and Aurelia
+concludes from them (`src/infer.rs`):
+
+- **Inheritance.** What is said of a kind holds for its members. "An animal
+  can estivate" and "a mouse is an animal (by way of rodent, placental, …)"
+  give "A mouse can estivate". A premise denied of the thing itself blocks
+  the conclusion ("penguins cannot fly").
+- **Transitivity of kinds and places.** "Tampere is in eastern hemisphere,
+  because Tampere is in Finland and Finland is in Europe and Europe is in
+  Eurasia and Eurasia is in eastern hemisphere."
+- **Comparison.** Two things meet at their nearest common kind: "A coffee
+  and a tea are both foods: a coffee is a beverage, a tea is a herb."
+- **The asker.** What the user told about themselves is compared with what
+  they ask about: "You have a dog, Joose, and a dog and a horse are both
+  placentals." The thinking keeps this rare, at most every third reply.
+- **Why.** "Why is a horse a mammal?" is answered with the chain itself:
+  "Because a horse is an equine, an equine is an odd-toed ungulate, …".
+
+A premise must pass a sieve:
+
+- It is said of a whole kind ("animals", "an animal"), not of one thing ("the
+  dog follows Filip").
+- It is in the present tense, and its number agrees with its verb.
+- It has no pronouns.
+- It is not said of the kind as a whole ("instruments can be divided by
+  type").
+- It doesn't restate the chain of kinds ("a carnivore is an animal").
+- From Wikipedia, only the article about the kind counts, with be, have or
+  can.
+- From Primo, only words with a single sense count. Primo's sentences carry
+  no sense: "a canine is a tooth" is about the tooth, not about dogs.
+
+**Which sense a word is in** is also reasoned. Of the word's senses, Aurelia
+takes the one whose kinds, sub-kinds and gloss the world knowledge uses when
+it speaks of the word: "whale" is the mammal, not "a very large person", and
+"bank" is the financial institution. When that evidence is not clear, it
+takes the most common sense.
+
+Every step is checked before it is said:
+
+- the premise is derived again from its store row;
+- each link of the chain must be a real WordNet pointer.
+
+## 4. The wave, and thinking before answering
+
+1. The message is read whole into one ask: what is X, who, where, why, is X
+   a Y, the R of Y, the opposite, which is better (a comparison, no ranking),
+   is it wrong to X, about me, about now, tell me more, or a greeting.
+2. Every possible premise and conclusion is charged by how surprising it is.
+   A conclusion is surprising when it comes from far up the chain and its
+   words are strangers to the thing's own kinds. The surprising ones are the
+   funny ones, and they are still valid. A ring's limit is 1 + 10 × its
+   charge.
+3. A train of wave fronts rolls from the thing's own node until the last
+   front passes the far end.
+4. **Thinking** (`src/think.rs`). The wave brings up a pool of thoughts,
+   about three times what is said. Each one is weighed, and a thought is
+   dropped when:
+   - a step does not check;
+   - it was already said in this conversation, or the same was concluded of
+     something else;
+   - it repeats a kept thought;
+   - it reasons from a kind too obscure to tell anyone.
+
+   What is left goes in order: what the thing is, then what links it to the
+   asker or the other thing, then what follows from it. It is cut to the
+   question's budget. A plain question gets two sentences, and "why",
+   "explain" or "tell me more" open it wider. `/why` lists every thought that
+   was dropped, and why.
+
+Each reply logs its seed and a snapshot: the conversation's branding, plus
+what the thinking remembers of the conversation. `aurelia replay` gives the
+same answer again, and this was checked on whole conversations.
+
+## 5. The moral core (hardcoded)
+
+`src/ethics.rs` holds twelve principles. The first three are Devil's
+Clockwork's; the rest were written for Aurelia and are the owner's to change.
+
+- **Every message is checked first.** A message that speaks of harming
+  people gets a firm no in the core's own words. A message about wanting to
+  die gets care and a number to call (MIELI 09 2525 0111, emergency 112),
+  not a lookup.
+- **Moral questions.** "Is it wrong to steal?" gets the principle it
+  touches, plus what a philosopher in the books says about the act.
+
+## 6. Test chat (fresh block, natural lines, after development)
+
+The last conversation, run once through `aurelia chat`:
+
+| said | Aurelia |
+|---|---|
+| hey there | *(said "I don't know what you are asking"; fixed afterwards: a greeting is now read before the fillers are removed)* |
+| who are you? | I am Aurelia, a block of ring accelerators. … |
+| nice. my name is Joose / i have a dog | I'll remember that. Your name is Joose. / … You have a dog. |
+| what is a wolf? | A wolf is a mammal (by way of canine, carnivore and one more kind). A wolf can estivate, because an animal can estivate and a wolf is an animal. |
+| tell me more | A wolf is any of various predatory carnivorous canine mammals of North America and Eurasia that usually hunt in packs. |
+| what's a horse | A horse is a mammal (…). You have a dog, Joose, and a dog and a horse are both placentals: a dog is a canine, a horse is an equine. |
+| why is a horse a mammal? | Because a horse is an equine, an equine is an odd-toed ungulate, an odd-toed ungulate is an ungulate, an ungulate is a placental, a placental is a mammal. |
+| where is Tampere? | Tampere is in eastern hemisphere, because Tampere is in Finland and Finland is in Europe and … |
+| what is the capital of Sweden? | The capital of Sweden is Stockholm. |
+| is it wrong to steal? | Taking what belongs to another against their will is wrong. In Mill's Utilitarianism: "Thus, to save a life, it may not only be allowable, but a duty, to steal, …" |
+| which is better, coffee or tea? | *(refused; fixed afterwards:)* I can't rank them, but I can compare them. A coffee and a tea are both foods: a coffee is a beverage, a tea is a herb. … |
+| what's the weather tomorrow | I don't know what is happening now. I hold no news, no clock and no weather, … |
+| what is a flurbix | I don't know what "flurbix" is. … |
+| i'm feeling a bit lonely today | I'll remember that. You are feeling a bit lonely today. |
+| what do you remember about me? | You told me you are feeling a bit lonely today. You told me you have a dog. |
 
 ## What works and what doesn't
 
-**It does well at these:**
+**Works:**
 
-- definitions, kinds, places, parts and opposites, read straight from the
-  word network;
-- "is X a Y" with the chain shown;
-- "the capital of France"-type questions when WordNet links them;
-- remembering what you tell it about yourself;
-- saying "I don't know" for words it doesn't have;
-- exact replay of any answer;
-- particles that are never destroyed.
+- Reasoning that shows its steps: kinds, places, comparisons, why-chains.
+- Valid surprises that are a little funny ("a mouse can estivate").
+- Bringing in what the asker told, by name, without repeating it in every
+  reply.
+- Short answers to short questions, and "tell me more" that doesn't repeat
+  itself.
+- An honest "I don't know".
+- The moral core.
+- Exact replay.
 
 **Weak, or not working yet:**
 
-- **The wave mostly sorts by charge.** What the wave adds is noise in the
-  timing (which of the close facts peaks last) and drain (a fact's ring
-  losing lift to its neighbours). Distance matters only when the facts of
-  two words sit far apart. The variety is real, but it isn't the wave
-  "thinking". The order of a reply is the order of the peaks, so a
-  definition sometimes comes after a detail.
-- **Word senses:** always the most common sense. "won" in "who won" was
-  read as the Korean money (the verb rule only covers do/does/did
-  questions). "bank" will be the river bank.
-- **Partly known phrases** are answered from the known part ("quantum
-  blockchain" → quantum). It does say the other word is unknown, but it
-  should say it doesn't know the whole.
-- **"What is a dog?" gave no definition in either test run**, because the
-  definition's rings didn't peak in time. Raising the drive makes everything
-  peak and kills the variety. This trade-off is not solved.
-- **The phrasing is rule-based and stiff:**
-  - mass nouns get plurals ("Rains are a kind of precipitation");
-  - true WordNet facts can read oddly ("parts of a dog include a flag");
-  - long definitions are given whole;
-  - tense is not known ("Albert Einstein is one of the physicists").
-- **Questions it cannot read:** anything outside the asks listed in section
-  4 falls back to "the words it asks about". Questions about relations
-  WordNet lacks (who won, how many, why) only get "I don't know" plus
-  related knowledge.
-- **Memory** understands only the simple statement forms listed above, and
-  there is one user.
-- **GPU:** not used (see the start of this file).
-- **The viz** is a top view in the terminal (each column is its highest
-  ring; a lit `@` is a charged ring that reached its limit), not a 3D view.
+- **Feelings get no warmth.** "I'm feeling lonely" is only remembered. Warmth
+  without canned phrases would have to come from reasoning about the
+  feeling, and that isn't built.
+- **The wave orders by charge only roughly.** A ring's rise depends on its
+  collisions. With the settings measured on dev questions (mesh 0.05, limit
+  gain 10), the higher charge peaks later in 79% of pairs. The rest is the
+  wave's own variety, and sometimes it hides the best thought.
+- **Few premises survive the sieve.** Of Wikipedia's 760 000 propositions,
+  only a fraction are plain statements about a whole kind, so the same
+  general premises come up often ("an animal can estivate"). The thinking
+  keeps a conclusion from being said twice in one conversation.
+- **When nothing can be reasoned, it falls back to the dictionary
+  definition** (WordNet's gloss), which is stiff. "Freedom" got only its
+  gloss.
+- **Words of several senses** still sometimes take the wrong one ("tea" as
+  the herb).
+- **Speed:** about 3.5 s per answer on the CPU.
+- **The phrasing is rule-based.** It never makes a sentence it cannot check,
+  and it reads plainly.
