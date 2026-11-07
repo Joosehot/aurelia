@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aurelia chat</title>
+<style>
+  :root {
+    --bg: #f6f4ef; --panel: #ffffff; --ink: #1f1d1a; --muted: #6b665d; --line: #e4dfd5;
+    --me: #2f5d8a; --me-ink: #ffffff; --au: #f0ece3; --accent: #b8862b; --why: #faf8f3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #15141a; --panel: #1d1c24; --ink: #ece8df; --muted: #9a958b; --line: #2e2c36;
+      --me: #3d6f9f; --me-ink: #ffffff; --au: #26242e; --accent: #d9a648; --why: #1a1920; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; height: 100vh; display: flex; flex-direction: column; }
+  header { padding: 14px 16px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 12px; }
+  header h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  header .ring { width: 22px; height: 22px; border-radius: 50%; border: 3px solid var(--accent); position: relative; }
+  header .ring.busy { animation: spin 1s linear infinite; border-top-color: transparent; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  header .note { color: var(--muted); font-size: 13px; margin-left: auto; }
+  #log { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; max-width: 820px; width: 100%; margin: 0 auto; }
+  .msg { max-width: 85%; padding: 10px 14px; border-radius: 14px; white-space: pre-wrap; word-wrap: break-word; }
+  .me { align-self: flex-end; background: var(--me); color: var(--me-ink); border-bottom-right-radius: 4px; }
+  .au { align-self: flex-start; background: var(--au); border-bottom-left-radius: 4px; }
+  .meta { font-size: 12px; color: var(--muted); margin-top: 6px; display: flex; gap: 10px; flex-wrap: wrap; }
+  .meta button { background: none; border: none; color: var(--accent); cursor: pointer; padding: 0; font-size: 12px; }
+  .why { margin-top: 8px; background: var(--why); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
+    font: 12px/1.45 ui-monospace, Consolas, monospace; white-space: pre-wrap; max-height: 320px; overflow: auto; display: none; }
+  .why.open { display: block; }
+  form { display: flex; gap: 8px; padding: 12px 16px 16px; max-width: 820px; width: 100%; margin: 0 auto; }
+  input { flex: 1; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel);
+    color: var(--ink); font-size: 16px; }
+  input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  form button { padding: 0 18px; border-radius: 12px; border: none; background: var(--accent); color: #1b1408; font-weight: 600; font-size: 15px; cursor: pointer; }
+  form button:disabled { opacity: .5; cursor: default; }
+  .hint { color: var(--muted); font-size: 14px; text-align: center; margin: 24px 0 8px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="ring" id="ring"></div>
+  <h1>Aurelia</h1>
+  <span class="note">no LLM · every answer reasoned from branded knowledge · ~3–4 s</span>
+</header>
+<div id="log">
+  <div class="hint">Ask about anything, tell it about yourself, ask "why", or say "tell me more".</div>
+</div>
+<form id="f">
+  <input id="q" autocomplete="off" placeholder="Say something…" autofocus>
+  <button id="send">Send</button>
+</form>
+<script>
+const log = document.getElementById('log'), q = document.getElementById('q'),
+      send = document.getElementById('send'), ring = document.getElementById('ring');
+function add(cls, text) {
+  const d = document.createElement('div'); d.className = 'msg ' + cls; d.textContent = text;
+  log.appendChild(d); log.scrollTop = log.scrollHeight; return d;
+}
+document.getElementById('f').addEventListener('submit', async e => {
+  e.preventDefault();
+  const text = q.value.trim(); if (!text) return;
+  q.value = ''; add('me', text);
+  send.disabled = true; ring.classList.add('busy');
+  const wait = add('au', '…the wave is rolling');
+  try {
+    const r = await fetch('/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
+    const j = await r.json();
+    wait.textContent = j.text;
+    const meta = document.createElement('div'); meta.className = 'meta';
+    meta.innerHTML = `<span>reply ${j.n} · seed ${j.seed} · ${(j.ms / 1000).toFixed(1)} s</span>`;
+    const b = document.createElement('button'); b.textContent = 'why?';
+    const why = document.createElement('div'); why.className = 'why'; why.textContent = j.why;
+    b.onclick = () => why.classList.toggle('open');
+    meta.appendChild(b); wait.appendChild(meta); wait.appendChild(why);
+  } catch (err) {
+    wait.textContent = 'Aurelia did not answer: ' + err;
+  }
+  send.disabled = false; ring.classList.remove('busy'); q.focus(); log.scrollTop = log.scrollHeight;
+});
+</script>
+</body>
+</html>
