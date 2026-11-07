@@ -82,6 +82,8 @@ pub enum Ask {
     AboutMe { verb: String, x: Option<Topic>, word: String },
     /// "are you a robot?"
     AreYou { word: String, x: Option<Topic> },
+    /// "what do you want to talk about?"
+    Topic,
     /// which is better, X or Y: no ranking, a comparison
     Rank { things: Vec<Topic> },
     Nothing,
@@ -990,6 +992,18 @@ impl Engine {
         if ["who am i", "who i am", "do you know me", "do you remember me", "know my name", "remember my name"].iter().any(|p| s.contains(p)) {
             return Some(Ask::WhoAmI);
         }
+        // "what do you want to talk about?": she has no wants, but she can offer what the asker gave her
+        let pick = ["want to talk about", "wanna talk about", "like to talk about", "should we talk about", "shall we talk about", "do we talk about", "to talk about", "pick a topic", "you choose", "you pick"];
+        if pick.iter().any(|p| s.contains(p)) && (s.starts_with("what") || s.starts_with("you") || s.starts_with("pick")) {
+            return Some(Ask::Topic);
+        }
+        // "need another kiss?", "want a cookie?": the question about her, said short
+        if matches!(w[0].as_str(), "need" | "want" | "wanna" | "like") && w.len() >= 2 {
+            let verb = if w[0] == "wanna" { "want".to_string() } else { w[0].clone() };
+            let rest: Vec<String> = w[1..].iter().filter(|x| !matches!(x.as_str(), "a" | "an" | "the" | "another" | "some" | "more" | "one")).cloned().collect();
+            let x = self.look(&rest, true);
+            return Some(Ask::AboutMe { verb, x, word: rest.join(" ") });
+        }
         // "I am Joose your creator", "I'm sad", "I feel a bit lonely today"
         let after = if s.starts_with("i am feeling") || s.starts_with("i have been feeling") {
             Some(if s.starts_with("i am") { 3 } else { 4 })
@@ -1201,6 +1215,26 @@ impl Engine {
                     "know" | "remember" => vec![self.note("self:know")?],
                     _ => vec![self.note("self:can")?],
                 }
+            }
+            Ask::Topic => {
+                // offer what the asker gave her: what they like, have or love; else their feeling
+                let offer = self
+                    .facts
+                    .iter()
+                    .rev()
+                    .find(|f| f.rel == Rel::Memory && matches!(f.subject.as_str(), "like" | "love" | "have"))
+                    .map(|f| (f.subject.clone(), f.object[0].clone()));
+                let mut out = vec![lacks(self, "need")];
+                match offer {
+                    Some((k, v)) => {
+                        let (w, _) = tokens(&v);
+                        let thing = self.topics(&w).0.into_iter().find(|t| t.pos == Pos::N).map(|t| knowledge::plural(&self.wn, &crate::wordnet::show(&t.lemma)));
+                        let about = thing.unwrap_or(v.clone());
+                        out.push(format!("But you told me you {k} {v}{}: we could talk about {about}.", to(&name)));
+                    }
+                    None => out.push(self.note("self:chat")?.replacen("Yes. ", "", 1)),
+                }
+                out
             }
             Ask::AreYou { word, x } => {
                 const LIFE: &[&str] = &["alive", "living", "human", "person", "conscious", "sentient", "real person", "man", "woman", "girl", "boy"];
@@ -1553,7 +1587,7 @@ impl Engine {
         let topic_ring = |e: &Engine, t: &Topic| e.node_of.get(&(t.pos, t.offset)).and_then(|&n| e.node_ring(n));
         // an act of talk is answered from herself, the speaker and the word network
         let act_words = match &ask {
-            Ask::Greet | Ask::Introduce { .. } | Ask::WhoAmI | Ask::Feeling { .. } | Ask::ActOnMe { .. } | Ask::AboutMe { .. } | Ask::AreYou { .. } => {
+            Ask::Greet | Ask::Introduce { .. } | Ask::WhoAmI | Ask::Feeling { .. } | Ask::ActOnMe { .. } | Ask::AboutMe { .. } | Ask::AreYou { .. } | Ask::Topic => {
                 let a = ask.clone();
                 self.answer_act(&a, msg)
             }
@@ -1564,7 +1598,7 @@ impl Engine {
             reading = false;
         }
         match &ask {
-            Ask::Greet | Ask::Introduce { .. } | Ask::WhoAmI | Ask::Feeling { .. } | Ask::ActOnMe { .. } | Ask::AboutMe { .. } | Ask::AreYou { .. } => {
+            Ask::Greet | Ask::Introduce { .. } | Ask::WhoAmI | Ask::Feeling { .. } | Ask::ActOnMe { .. } | Ask::AboutMe { .. } | Ask::AreYou { .. } | Ask::Topic => {
                 if before.is_empty() {
                     before.push("I don't know what you are asking.".into());
                 }
