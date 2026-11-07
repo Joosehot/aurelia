@@ -90,6 +90,13 @@ pub fn think(mut thoughts: Vec<Thought>, budget: usize, said_before: &HashSet<St
             }
         }
     }
+    // asked again, the same answer again is better than silence
+    if kept.is_empty() {
+        if let Some(i) = dropped.iter().position(|(_, w)| *w == "already said in this talk") {
+            let (text, _) = dropped.remove(i);
+            kept.push(text);
+        }
+    }
     Verdict { kept, kept_keys, dropped }
 }
 

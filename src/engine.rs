@@ -225,6 +225,27 @@ const CONTRACTIONS: &[(&str, &[&str])] = &[
     ("isnt", &["is", "not"]),
     ("thats", &["that", "is"]),
     ("u", &["you"]),
+    ("you're", &["you", "are"]),
+    ("youre", &["you", "are"]),
+    ("you've", &["you", "have"]),
+    ("you'll", &["you", "will"]),
+    ("we're", &["we", "are"]),
+    ("they're", &["they", "are"]),
+    ("i've", &["i", "have"]),
+    ("ive", &["i", "have"]),
+    ("i'll", &["i", "will"]),
+    ("i'd", &["i", "would"]),
+    ("can't", &["can", "not"]),
+    ("cant", &["can", "not"]),
+    ("won't", &["will", "not"]),
+    ("wont", &["will", "not"]),
+    ("aren't", &["are", "not"]),
+    ("wasn't", &["was", "not"]),
+    ("didn't", &["did", "not"]),
+    ("didnt", &["did", "not"]),
+    ("let's", &["let", "us"]),
+    ("there's", &["there", "is"]),
+    ("that's", &["that", "is"]),
     ("ur", &["your"]),
 ];
 
@@ -879,8 +900,14 @@ impl Engine {
         let mut kept: Vec<(Vec<String>, Vec<String>, bool)> = Vec::new();
         let whole = tokens(msg).0.join(" ");
         // asked about herself by name
-        if ["is aurelia", "are you aurelia", "about aurelia", "aurelia who are you", "aurelia what are you"].iter().any(|p| whole.contains(p)) {
+        if ["is aurelia", "are you aurelia", "you are aurelia", "about aurelia", "aurelia who are you", "aurelia what are you"].iter().any(|p| whole.contains(p)) {
             return Ask::Myself("self:who");
+        }
+        // "are you a robot?", "you are sad?": a question about her
+        let ws: Vec<&str> = whole.split(' ').filter(|x| *x != "aurelia").collect();
+        if ws.len() >= 2 && ((ws[0] == "are" && ws[1] == "you") || (ws[0] == "you" && ws[1] == "are")) && !ethics::harms_people(&all) {
+            const FEEL: &[&str] = &["ok", "okay", "fine", "well", "happy", "sad", "tired", "alright", "good", "alive", "lonely", "angry", "bored"];
+            return if ws.iter().any(|x| FEEL.contains(x)) { Ask::Myself("self:how") } else { Ask::Myself("self:who") };
         }
         let mut named = false;
         for (s, q) in sentences {
@@ -1540,7 +1567,9 @@ impl Engine {
                 }
             }
             let up = (0..b.rings()).filter(|&r| b.limit[r] > 1.0 && b.peak[r] >= 0).count();
-            if up >= want || b.cfg.wave_fronts >= 2 * fronts {
+            // more fronts while too few have peaked: twice as many at most, four times when none has
+            let cap = if up == 0 { 4 * fronts } else { 2 * fronts };
+            if up >= want || b.cfg.wave_fronts >= cap {
                 break;
             }
             b.cfg.wave_fronts += 4;
