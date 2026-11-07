@@ -86,6 +86,10 @@ pub enum Ask {
     Topic,
     /// "want to know what happened today?"
     Offer,
+    /// "What?": what she said, again
+    Again,
+    /// "you wouldn't be here without me"
+    Owed,
     /// "can you smile?" (claim None), "you cannot smile, right?" (claim Some(false))
     Can { verb: String, claim: Option<bool> },
     /// "today I went to the market"
@@ -948,6 +952,39 @@ impl Engine {
             return Ask::Myself("self:who");
         }
         // what the message does, before what it is about
+        // a moral question in any form: "do you think killing is good or bad?"
+        if let Some(act) = self.moral_any(&all) {
+            let acts = act.iter().filter_map(|x| self.look_as(&[x.clone()], &[Pos::N, Pos::V])).collect();
+            let mut words = act.clone();
+            words.extend(act.iter().filter_map(|x| self.wn.base(x, Pos::V)));
+            words.extend(act.iter().filter_map(|x| self.wn.base(x, Pos::N)));
+            return Ask::Moral { words, acts };
+        }
+        // "What?", "huh?": what she said, again
+        if matches!(whole.as_str(), "what" | "huh" | "sorry" | "pardon" | "what do you mean" | "come again" | "excuse me" | "what did you say") {
+            return Ask::Again;
+        }
+        // the act of talk: the asking sentence first, then the others ("But do you like your creator? He made you.")
+        let mut parts: Vec<(String, bool)> = Vec::new();
+        let mut cur = String::new();
+        for ch in msg.chars() {
+            cur.push(ch);
+            if matches!(ch, '.' | '!' | '?' | ';') {
+                parts.push((cur.trim().to_string(), ch == '?'));
+                cur.clear();
+            }
+        }
+        if !cur.trim().is_empty() {
+            parts.push((cur.trim().to_string(), false));
+        }
+        parts.sort_by_key(|(_, q)| !q);
+        if parts.len() > 1 {
+            for (p, _) in &parts {
+                if let Some(act) = self.talk_act(p) {
+                    return act;
+                }
+            }
+        }
         if let Some(act) = self.talk_act(msg) {
             return act;
         }
@@ -1032,7 +1069,18 @@ impl Engine {
             // "wow", "ok": only the talk's own words, answered as talk
             return if said.is_empty() { None } else { Some(Ask::Social { keys: said }) };
         }
+        // "but", "and", "so" at the start join the message to the talk; they are not what it does
+        while w.first().map(|x| matches!(x.as_str(), "but" | "and" | "so" | "then" | "also")).unwrap_or(false) && w.len() > 1 {
+            w.remove(0);
+            o.remove(0);
+        }
         let s = w.join(" ");
+        // "you wouldn't be here without me": what she owes the speaker
+        if s.contains("without me") || s.contains("without him") || s.contains("without her") || s.contains("i made you") || s.contains("i created you") || s.contains("i built you") {
+            if s.contains("you") {
+                return Some(Ask::Owed);
+            }
+        }
         const GREET: &[&str] = &["hello", "hi", "hey", "greetings", "moi", "terve", "yo", "howdy", "hiya"];
         // "Hey! I just kissed you!": past the greeting to what the message does
         if GREET.contains(&w[0].as_str()) && w.len() > 2 {
@@ -1147,7 +1195,8 @@ impl Engine {
             let mut verb = w[2].clone();
             let mut rest = strip_articles(&w[3..]);
             // "would you like a cookie" is wanting one
-            if w[0] == "would" && verb == "like" {
+            // "would you like a cookie" is wanting one; "would you like me" is liking
+            if w[0] == "would" && verb == "like" && !w.get(3).map(|x| matches!(x.as_str(), "me" | "us" | "him" | "her" | "them" | "it")).unwrap_or(false) {
                 verb = "want".into();
             }
             // "do you want to sleep": the act wanted
@@ -1173,6 +1222,32 @@ impl Engine {
             return Some(Ask::AreYou { word: rest.join(" "), x });
         }
         None
+    }
+
+    /// The thing a question names, as she says it back: "me" is "you", "your creator" is the
+    /// speaker when they told her so, a plural without an article.
+    fn object(&self, word: &str, x: &Option<Topic>) -> String {
+        let role = self.remembered("role");
+        if let Some(r) = &role {
+            if word == format!("your {r}") || word == *r && word != "me" {
+                return "you".into();
+            }
+        }
+        let swapped = knowledge::swap_person(word);
+        if swapped != word || word.split(' ').any(|w| matches!(w, "me" | "you" | "my" | "your" | "us")) {
+            return swapped;
+        }
+        // "humans", "dogs": said as a plural, without an article
+        if let Some(last) = word.split(' ').last() {
+            if last.len() > 3 && last.ends_with('s') && self.wn.base(&last[..last.len() - 1], Pos::N).is_some() {
+                return word.to_string();
+            }
+        }
+        match x {
+            Some(t) if word.split(' ').last().map(|l| l != t.lemma && self.wn.base(l, Pos::N).as_deref() == Some(t.lemma.as_str())).unwrap_or(false) => word.to_string(),
+            Some(t) => self.np(t),
+            None => word.to_string(),
+        }
     }
 
     /// The text of a self note, if it is branded and checks.
@@ -1317,8 +1392,13 @@ impl Engine {
                         _ => vec![format!("No. {}", lacks(self, "need"))],
                     },
                     "like" | "love" | "hate" | "miss" | "enjoy" | "fear" => {
-                        let what = x.as_ref().map(|t| self.np(t)).unwrap_or(word.clone());
+                        let what = self.object(word, x);
                         vec![format!("{} So I can't {v} {what}.", lacks(self, "feeling"))]
+                    }
+                    // "would you be interested?": a feeling she doesn't have
+                    "be" if word.split(' ').next().map(|a| ["interested", "happy", "glad", "willing", "sad", "angry", "jealous", "afraid", "scared", "excited", "proud", "ashamed", "upset", "lonely", "bored", "curious"].contains(&a)).unwrap_or(false) => {
+                        let adj = word.split(' ').next().unwrap_or("");
+                        vec![format!("{} So I can't be {adj}.", lacks(self, "feeling"))]
                     }
                     "feel" => vec![lacks(self, "feeling")],
                     "eat" | "drink" | "sleep" | "breathe" | "dream" => vec![format!("No. To {v} takes a body. {}", lacks(self, "body"))],
@@ -1375,6 +1455,17 @@ impl Engine {
                 };
                 vec![text]
             }
+            Ask::Again => match &self.last {
+                Some(r) if !r.text.is_empty() => vec![format!("I said: {}", r.text)],
+                _ => vec!["I haven't said anything yet.".into()],
+            },
+            Ask::Owed => match (self.remembered("role"), &name) {
+                (Some(r), Some(n)) if ["creator", "maker", "builder", "developer", "programmer", "author", "designer"].contains(&r.as_str()) => {
+                    vec![format!("That's true, {n}. You are my {r}: without you I wouldn't be here.")]
+                }
+                (Some(r), None) => vec![format!("You are my {r}, so that may be true.")],
+                _ => vec!["Someone made me. If it was you, tell me, and I'll remember it.".into()],
+            },
             Ask::Offer => vec![format!("Yes{}. {}", to(&name), self.note("self:listen")?)],
             Ask::Told { clause, when } => {
                 let f = self.turn_fact(Rel::Memory, "you:told", "told", vec![clause.clone()], msg.trim());
@@ -1438,6 +1529,33 @@ impl Engine {
     }
 
     /// "is it wrong to lie", "is lying wrong", "should I steal": the act asked about.
+    /// A judgement asked of an act, in any wording: the act's words.
+    fn moral_any(&self, w: &[String]) -> Option<Vec<String>> {
+        const JUDGE: &[&str] = &["good", "bad", "wrong", "right", "evil", "moral", "immoral", "ethical", "unethical", "acceptable", "okay", "ok"];
+        const FRAME: &[&str] = &["is", "are", "think", "should", "was", "consider", "believe"];
+        if !w.iter().any(|x| JUDGE.contains(&x.as_str())) || !w.iter().any(|x| FRAME.contains(&x.as_str())) {
+            return None;
+        }
+        // "are you good?" is about her, "is a dog good?" is not a question of right and wrong
+        if w.len() >= 2 && ((w[0] == "are" && w[1] == "you") || (w[0] == "you" && w[1] == "are")) {
+            return None;
+        }
+        let act: Vec<String> = w
+            .iter()
+            .filter(|x| !JUDGE.contains(&x.as_str()) && !FRAME.contains(&x.as_str()) && !STOP.contains(&x.as_str()) && !matches!(x.as_str(), "or" | "morals" | "moral" | "think"))
+            .filter(|x| {
+                self.wn.base(x, Pos::V).is_some()
+                    || self.wn.base(x, Pos::N).and_then(|b| self.wn.senses(&b, Pos::N).first().and_then(|o| self.wn.get((Pos::N, *o))).map(|s| s.lexfile == 4 || s.lexfile == 11)).unwrap_or(false)
+            })
+            .cloned()
+            .collect();
+        if act.is_empty() {
+            None
+        } else {
+            Some(act)
+        }
+    }
+
     fn moral_act(&self, w: &[String]) -> Option<Vec<String>> {
         const JUDGE: &[&str] = &["wrong", "right", "ok", "okay", "good", "bad", "evil", "moral", "immoral", "fine", "acceptable", "ethical", "unethical", "sin"];
         let content = |x: &[String]| -> Vec<String> { x.iter().filter(|y| !STOP.contains(&y.as_str()) && !JUDGE.contains(&y.as_str())).cloned().collect() };
@@ -1772,7 +1890,7 @@ impl Engine {
         let topic_ring = |e: &Engine, t: &Topic| e.node_of.get(&(t.pos, t.offset)).and_then(|&n| e.node_ring(n));
         // an act of talk is answered from herself, the speaker and the word network
         let act_words = match &ask {
-            Ask::Greet | Ask::Introduce { .. } | Ask::WhoAmI | Ask::Feeling { .. } | Ask::ActOnMe { .. } | Ask::AboutMe { .. } | Ask::AreYou { .. } | Ask::Topic | Ask::Offer | Ask::Told { .. } | Ask::Can { .. } => {
+            Ask::Greet | Ask::Introduce { .. } | Ask::WhoAmI | Ask::Feeling { .. } | Ask::ActOnMe { .. } | Ask::AboutMe { .. } | Ask::AreYou { .. } | Ask::Topic | Ask::Offer | Ask::Told { .. } | Ask::Can { .. } | Ask::Again | Ask::Owed => {
                 let a = ask.clone();
                 self.answer_act(&a, msg)
             }
@@ -1783,7 +1901,7 @@ impl Engine {
             reading = false;
         }
         match &ask {
-            Ask::Greet | Ask::Introduce { .. } | Ask::WhoAmI | Ask::Feeling { .. } | Ask::ActOnMe { .. } | Ask::AboutMe { .. } | Ask::AreYou { .. } | Ask::Topic | Ask::Offer | Ask::Told { .. } | Ask::Can { .. } => {
+            Ask::Greet | Ask::Introduce { .. } | Ask::WhoAmI | Ask::Feeling { .. } | Ask::ActOnMe { .. } | Ask::AboutMe { .. } | Ask::AreYou { .. } | Ask::Topic | Ask::Offer | Ask::Told { .. } | Ask::Can { .. } | Ask::Again | Ask::Owed => {
                 if before.is_empty() {
                     before.push("I don't know what you are asking.".into());
                 }
