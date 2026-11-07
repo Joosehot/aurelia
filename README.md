@@ -1,181 +1,223 @@
-# Aurelia v0
+# Aurelia
 
-A bowl of identical-looking rice grains is stirred. The friction between the grains forms *diamonds*:
-new artificial particles that come from nowhere but the grains' hidden values and the history of how
-they rubbed. Each diamond is a particle species. Copies of a species are dropped into a world of
-their own, where they move, turn and bind to each other into molecules. The question v0 asks is
-whether the matter they assemble into computes anything useful.
+This folder holds two things:
 
-![the bowl being stirred](docs/bowl.png) ![32 copies of one particle after assembly](docs/assembly.png)
+- **Aurelia** (the Rust crate at the top, `src/`): a conversational engine
+  built from a 3D block of ring accelerators. It uses no LLM and no neural
+  network. It answers only from knowledge branded into its particles.
+- **The particle maker** ([`particle_maker/`](particle_maker/README.md),
+  Python): a stirred rice bowl whose friction forms artificial particles. It
+  is a separate program and is used like this:
+  `python -m particle_maker run --minutes 2 --stir spiral --seed 42`.
 
-*Left: the spoon's spiral path heats the grains by friction (colour); the stars are diamonds forming.
-Right: 32 copies of particle `A42-spiral-e000-d045` after assembling; the cyan rings are bonds.*
-(`docs/bowl.gif` and `docs/assembly.gif` show them moving.)
-
-```
-python -m aurelia run --minutes 2 --stir spiral --seed 42   # stir, form, test, keep, repeat
-python -m aurelia vault list                                 # kept particles, best first
-python -m aurelia vault show <id>                            # report, definition, provenance
-python -m aurelia vault replay <id>                          # rebuild from seed and re-test
-python -m aurelia bowl --stir all --seconds 20               # friction and diamonds per stir pattern
-python -m aurelia viz --stir spiral                          # docs/bowl.gif
-python -m aurelia viz --particle <id>                        # docs/assembly.gif
-```
-
-Python 3.11, NumPy, PyTorch with CUDA (RTX 4070), matplotlib. Set up with
-`uv venv --python 3.11 .venv` and `pip install -r requirements.txt` (torch from the cu124 index).
-MNIST is read from `AURELIA_MNIST` (default `C:\Users\joose\Neuras\data\mnist`).
-
-## 1. The bowl (`aurelia/bowl.py`)
-
-- 2000 soft discs of radius 1 fill 78 % of a circular bowl. Every grain has the same physics
-  (spring-dashpot contact, Coulomb friction with a viscous cap, air drag) and its own hidden value,
-  12 random floats that the physics never reads.
-- Stirring: `circle`, `spiral` (the spoon spirals in and out and reverses every 12 s), `figure8`,
-  `shake` (the bowl sloshes), `jolt` (random kicks to patches of grains), `mixed`, `none`.
-- Friction power per contact = |friction force| x |slip speed|. Each grain keeps a decaying heat
-  (tau 1 s), each pair a decaying friction work (tau 2 s) and the time their latest contact began.
-- **A diamond forms** when the hottest grain (heat >= 15) seeds a cluster: the grains that rubbed
-  hardest against the cluster join (each at least 30 % as hard as its strongest pair), 4 to 12
-  of them, and their summed heat reaches 80. Their hidden values, pair work, contact order, peak
-  forces and the local stir state become the diamond's *record*. The grains are spent: heat and
-  memory to zero, new hidden values.
-
-Stirring measurably makes diamonds (`python -m aurelia bowl --stir all --seconds 20 --seed 1`):
-
-| stir    | friction work | diamonds |
-|---------|--------------:|---------:|
-| none    |             0 |        0 |
-| jolt    |        23 930 |        3 |
-| circle  |        43 903 |       74 |
-| figure8 |        44 036 |       72 |
-| spiral  |        83 769 |      188 |
-| shake   |       115 875 |      142 |
-| mixed   |       112 035 |      203 |
-
-The simulation uses a neighbour table rebuilt every 10 steps and only ordered, non-atomic GPU
-operations (~2 ms per step), so an episode replays bit for bit.
-
-## 2. The diamond: a particle (`aurelia/diamond.py`, `aurelia/particle.py`)
-
-Friction is stick-slip, so the particle is built from stick-slip. A particle has:
-
-- **k ports** on its rim, one per grain, in the order the grains' contacts began. Each port:
-  - is a *play operator*: it holds a position and moves only when the drive on it leaves its dead
-    zone tau (from the grain's hidden value and how hard it was pressed). It is dragged along at
-    distance tau, so it remembers;
-  - has a **charge**, a 4-dim unit vector from the grain's hidden value. Two ports attract when their
-    charges point opposite ways and repel when they point the same way.
-- **an inner structure** A: how a push on one port moves the others. It comes from the friction
-  work between the grains, signed by whether their hidden values agree, and directed by contact
-  order: a port feels a port that touched earlier fully and a later one by beta, the cluster's swirl.
-  A swirling cluster gives a two-way knot, a jolted one a one-way cascade.
-- **a mass** (1 + its friction heat / 80) and **a radius** (0.8 + 0.12 k);
-- **a slip rate** (from how fast the cluster moved) and **a number of sweeps** (2..6, from how
-  unevenly the forces were spread).
-
-Why this form: nothing in it is borrowed from standard ML. Its nonlinearity is a dead zone with
-memory (hysteresis), its wiring is what the grains' friction left, and how it connects to other
-particles is not designed but decided by charges and shapes when copies collide.
-
-**The world.** 32 copies of a species start at random in a disc covering 35 % of it and move under
-their ports' forces, soft body contact and Brownian kicks that cool to zero over 1500 steps. Ports
-of different particles that end up touching, with positive affinity, each other's nearest partner,
-become bonds. Bonds join particles into molecules (typically 0.5-2 bonds per particle, the largest
-molecule 3-9 particles).
-
-**The matter computes.** Inputs push the ports of a quarter of the particles. Each step every port
-relaxes for its sweeps through the inner structures and the bonds; nothing in the matter is trained.
-Only a linear readout of all port states is fitted (ridge regression).
-
-Every particle is stored as JSON: the record, the definition built from it, their hashes, and its
-provenance (run seed, episode seed, step). `vault replay` checks all of it (see 5).
-
-## 3. Testing (`aurelia/matter.py`)
-
-Five fixed tasks, each drawn once from a fixed data seed:
-
-| task    | what is read off the matter                                                  | score         |
-|---------|-------------------------------------------------------------------------------|---------------|
-| memcap  | the input 1..15 steps ago (memory capacity)                                    | sum R^2 / 15  |
-| xor     | XOR of the two previous random bits                                            | accuracy      |
-| narma10 | the NARMA-10 nonlinear system                                                  | R^2           |
-| latch   | 4 bits shown once at a random step among noise, recalled at step 10            | bit accuracy  |
-| mnist14 | MNIST pooled to 14x14, fed row by row (2000 train, 1000 test)                  | accuracy      |
-
-Comparisons, with the same readout and the same number of units (32 k):
-
-- **ESN** (echo state network, the standard random reservoir), with input scale and spectral radius
-  tuned per task on the test score over a 3 x 3 grid, 3 seeds. The matter gets the same input-scale
-  grid. Both are tuned on the test set, so both numbers are optimistic in the same way.
-- **no bonds**: the same particles unassembled. **random bonds**: the same number of bonds placed at
-  random. These say whether the *assembly* matters.
-- **scrambled species** (once per run): the first batch's species rebuilt with their friction
-  structure shuffled. This says whether the *bowl* matters.
-
-A particle is **kept** when its matter beats or matches the ESN (within max(std, 0.01)) on at least
-one task while being clearly above chance (by 0.05). "Assembly matters" marks tasks where it also
-beats both bond controls by 0.01. Each particle gets 2 worlds (seeds).
-
-## 4. Results of the first session (2 minutes, spiral, seed 42)
-
-64 particles tested at ~40 per minute; the vault holds all 64 (`vault/`), and
-`runs/run-20261106-190156-spiral-s42/` has the log and summary. The 30-minute run was not done.
-
-Mean over the 64 particles, and the ESN of the same size:
-
-| task    | matter | best particle | no bonds | random bonds | ESN   | kept on it | assembly matters |
-|---------|-------:|--------------:|---------:|-------------:|------:|-----------:|-----------------:|
-| memcap  | 0.102  | 0.134         | 0.100    | 0.102        | 0.999 | 0          | 0                |
-| xor     | 0.564  | 0.649         | 0.557    | 0.548        | 0.527 | 37         | 7                |
-| narma10 | 0.293  | 0.441         | 0.279    | 0.287        | 0.842 | 0          | 0                |
-| latch   | 0.903  | 0.979         | 0.898    | 0.906        | 0.679 | 64         | 5                |
-| mnist14 | 0.559  | 0.657         | 0.511    | 0.557        | 0.844 | 0          | 0                |
-
-Kinds that formed: knot 30, cascade 14, inhibitory knot 8, inhibitory cascade 8, excitatory
-cascade 3, excitatory knot 1.
-
-What this says, plainly:
-
-- **Every particle was kept, all on latch, 37 also on xor.** Particle matter holds a stored pattern
-  through noise far better than an ESN (0.90 vs 0.68): a port does not move while the noise stays in
-  its dead zone. But the matter does as well with no bonds at all (0.898), so this is the single
-  particle's stick-slip memory, not anything the particles built together.
-- **xor** is where assembly shows most: for 7 particles the bonded matter beats both unbonded and
-  randomly bonded (e.g. `A42-spiral-e000-d045`: 0.63 vs 0.49 and 0.49); for 5 on latch. The ESN is
-  weak on xor (0.53), so beating it there is a low bar.
-- **memcap, narma10 and mnist14: the matter is much worse than an ESN.** It forgets a signal almost
-  at once (dead zones quantise it away) and gives poor features for digits.
-- **The bowl did not matter yet.** The first 32 species rebuilt with their friction structure
-  scrambled score the same (latch 0.896 vs 0.892, xor 0.572 vs 0.569, all 32 kept either way). What makes these particles useful is the *kind* of
-  particle (stick-slip ports with memory), which every diamond shares, not the particular structure a
-  given friction history left.
-
-So v0 makes real particles with their own physics, they assemble into molecules, and their matter is
-a good physical memory element. It has not yet shown that the bowl invents something better than
-chance, nor that the molecules compute more than their parts except in a few cases (7 on xor, 5 on
-latch, out of 64).
-
-An earlier version of v0 used each diamond as a fixed activation inside a trained MLP. That was a
-misreading of "artificial particle" and was removed; its result agreed with this one (the knot form
-helped, the particular knot hardly did).
-
-## 5. Reproducibility
-
-`vault replay <id>` (1) rebuilds the definition from the saved record, (2) re-simulates the bowl
-episode from its seed up to the step the diamond formed and compares the record, (3) re-assembles
-its worlds and re-tests it. For `A42-spiral-e000-d045`: definition identical, record identical
-(1.3 s of re-simulation), bonds and molecules identical, all five scores identical to 4 decimals.
-Worlds are seeded per particle, so a world assembles the same whichever batch it is tested in.
-
-## Layout
+The rest of this file is about Aurelia.
 
 ```
-aurelia/bowl.py      the bowl, friction memory, diamond formation
-aurelia/diamond.py   record -> inner structure (frictional knot), anatomy, kinds
-aurelia/particle.py  record -> particle; the world where copies assemble and bond
-aurelia/matter.py    the matter computing, tasks, ESN baselines, verdicts
-aurelia/loop.py      run and replay
-aurelia/vault.py     vault files and reports
-aurelia/viz.py       bowl and assembly animations
+cargo build --release
+target\release\aurelia chat            # talk; /why shows the last answer's rings; /quit
+target\release\aurelia chat --viz      # the same, with the block drawn as the wave passes
+target\release\aurelia ask "What is a dog?" "Is a dog an animal?"   # lines as one conversation
+target\release\aurelia debug           # which rings peaked and what they held, last answer
+target\release\aurelia replay runs\chat\<run> <n>                   # replay answer n exactly
+cargo test --release                   # particles never destroyed; collisions are clockwork
 ```
+
+Settings are in `aurelia.toml`. The word network is Prim's: WordNet 3.1 as
+`Primogenitus/motor/data/wordnet/dict` keeps it. Aurelia only reads that
+folder.
+
+**Why Rust:** Prim and its word network are Rust. The block has 17 672 rings
+and 53 016 particles, and one answer's wave takes 330–350 steps. In Rust on
+the CPU that is about 0.85 s per answer, with about 2.3 million collisions.
+The machine has an RTX 4070, but Aurelia does not use the GPU, because
+the CPU is fast enough. The collisions are sequential (each one changes the
+next), and that is also what makes every answer exactly replayable from its
+seed.
+
+## 1. The grid
+
+The lattice has 48 × 48 × 8 points. Every four neighbouring points of a
+layer are one **ring accelerator**: the circle through those four corners.
+That gives 47 × 47 rings per layer, in 8 stacked layers. Particles on a ring
+pass its corners at 45°, 135°, 225° and 315°. A corner point is shared by up
+to four rings, and that is where rings touch.
+
+- **Spin.** Each ring turns at its own pace. The directions alternate like a
+  checkerboard (so neighbours mesh like gears), and a seeded 15% turn the
+  other way. Each answer's seed varies every pace by ±30%.
+- **Layers.** Stacked rings share spin through an "axle" (2% per step).
+
+## 2. Particles and clockwork
+
+Each ring carries 3 particles that orbit with it. A particle has an angle, a
+direction (with its ring or against it), a lift (how far it has risen toward
+its ring's limit) and possibly a branded fact.
+
+When a particle passes a corner and another ring's particle is at the same
+corner (within 0.15 rad), they collide. A collision is clockwork:
+
+- both particles **bounce back**: their directions flip;
+- **lift passes** from the higher particle to the lower one (8% of the
+  difference), so the total stays the same;
+- the two rings' **spins mesh**: both are pushed toward turning against each
+  other, while ω_a − ω_b stays the same.
+
+Nothing is ever destroyed or fused. The particle array never changes length.
+A collision passes only direction, lift and spin, and a particle's branded
+fact never changes. `cargo test` checks this over five seeds
+(`particles_are_never_destroyed`, `a_collision_is_clockwork`,
+`rings_touch_at_shared_corners`).
+
+## 3. Knowledge by branding, with a lightning strike
+
+Nothing is trained. A fact is **branded** onto particles when the
+conversation first needs it.
+
+- **Knowledge** comes from the word network, from the first (most common)
+  sense of a word. That covers the definition, kind of (hypernym), instance
+  of, part of, member of, has parts, other words for it, the opposite, and
+  example sentences.
+- **Derived knowledge** is also branded. "Is X a Y" gets the shortest
+  hypernym chain from X up to Y. "The R of Y" gets a part of Y that is a
+  kind of R (the capital of France: Paris is a part of France and a kind of
+  capital).
+- **Memory nodes** are what was said: every line the user says, and what the
+  user tells about themselves ("my X is Y", "I am / like / love / have / live
+  in …", "call me …").
+
+Every fact is branded together with its **lightning strike**: a link to
+where it came from (the synset, the chain of synsets, or the user's exact
+line), plus the turn and the word that brought it. Before a fact may be
+said, Aurelia derives it again from its strike, and a fact that doesn't come
+out the same is not said (`/why` marks it `FAILED CHECK`). So an answer can
+only hold facts that come from WordNet or from the conversation. The
+phrasing rules add only connecting words.
+
+Each fact is branded onto **3 particles**, each on a ring of its own, at the
+free rings nearest the word's home ring (a hash of the word). The facts of
+one word therefore sit together. Particles are never re-used for something
+else while there is room, and memory is never overwritten.
+
+## 4. The wave, and how a message enters (the design chosen)
+
+1. **The message is read whole** into one ask: what is X, who, where,
+   when/why/how, is X a Y, the R of Y, the opposite of X, something about
+   me, what did I say, about Aurelia itself, or a greeting. The words it
+   asks about are found in the word network (phrases of three words first,
+   then two, then one; base forms by WordNet's own rules).
+2. **The message brands** the knowledge of those words, if it isn't there
+   yet, and charges the particles that answer the ask. A definition gets
+   charge 1.0, kind-of 0.9, part-of 0.8, and so on. For "where", part-of
+   gets 1.0; for "is X a Y", the chain alone.
+3. **The charge sets the ring's limit**: limit = 1 + 4 × the highest charge
+   on the ring. An uncharged ring has limit 1.
+4. **The message sets where the wave starts**: at the home ring of the first
+   word it asks about.
+5. **The wave rolls.** Before it, the block turns on its own for 120 steps
+   (seeded). Then a train of 12 spherical fronts leaves the start, 24 steps
+   apart, at 0.7 rings per step. A front passing a ring spins it up. Spin
+   above a ring's own pace lifts its particles toward the ring's limit (half
+   as fast for a particle running against its ring). Collisions spread spin
+   and lift sideways through the block.
+
+## 5. Reading the answer
+
+When the last front has passed the far end of the block, the reading
+begins.
+
+- Uncharged rings (limit 1) peak early. The rings that rise to their limit
+  **last** are the charged ones with the highest limits.
+- The reply is read from the last charged rings to peak, in the order they
+  peaked: 2 per word asked about (4 at most), or 1 for a one-answer ask.
+- Each fact is checked against its strike and said once. The wording (one
+  of two per kind of fact) is set by the particle at that moment: whether it
+  runs with its ring or against it.
+- When a ring holding the most charged fact gets drained by its neighbours
+  and doesn't reach its limit in time, it isn't read. Then the answer shifts
+  to another angle.
+
+The same question gives different answers because the paces, the angles and
+the 120 steps of the block's own turning come from a fresh seed each time.
+Each reply logs its seed and a snapshot of the branded block
+(`runs/chat/<run>/replies.jsonl`, `snap-NNNN.json`), and `aurelia replay`
+gives the same answer again. This was checked on two answers.
+
+When nothing holds an answer, Aurelia says so:
+
+- a word in neither the word network nor the talk gets *I don't know what
+  "X" is*;
+- a question the knowledge cannot answer (who for a thing, when, why, how,
+  where for something with no "part of") gets *I don't know when. What I do
+  know: …*;
+- something asked about the user that the user hasn't told gets *You
+  haven't told me*;
+- "is X a Y" with no chain gets *I have nothing that says …*. Aurelia never
+  says "no" here, because the network not holding it is not evidence.
+
+## 6. The test chat (10 questions, fresh seeds, after development)
+
+The settings were developed on other questions (cat, Rome, Newton, Italy,
+cold). After that, this conversation was run once with fresh seeds, and
+nothing was changed because of it.
+
+| asked | Aurelia | |
+|---|---|---|
+| Hello! | Hello. Ask me about a word, or tell me something about yourself. | greeting rule |
+| What is a dog? | Dogs are a kind of domestic animal. Parts of a dog include a flag. | true to WordNet; "flag" is WordNet's word for a dog's tail |
+| What is a dog? | A dog is a kind of canine. Parts of a dog include a flag. | another angle; no definition either time |
+| Is a dog an animal? | Yes, dogs are animals (by way of domestic animal). | the chain, checked |
+| Who was Albert Einstein? | Albert Einstein is one of the physicists. Albert Einstein: physicist born in Germany who formulated the special theory of relativity … (1879-1955). | |
+| What is the capital of France? | The capital of France is Paris. | derived: part of France and a kind of capital |
+| My name is Joose. → What is my name? | I'll remember that. Your name is Joose. → Your name is Joose. | memory |
+| Who won the 2022 World Cup? | I don't know who. What I do know: About a won: the basic unit of money in South Korea. World Cup is a kind of tournament. | honest about who, but "won" was read as the Korean money |
+| What is a quantum blockchain? | I don't know "blockchain". Quanta are a kind of quantity. A quantum is a discrete amount … | honest about "blockchain", but it answers about "quantum" alone |
+| Where is Helsinki? | Helsinki is the capital and largest city of Finland; … Helsinki is in Finland. | |
+| What does happy mean? | Unhappy is the opposite of happy. Happy means enjoying or showing or marked by joy or pleasure. | |
+
+No fact was invented: every fact said is in WordNet or was said by the
+user, and every one passed its strike check.
+
+## What works and what doesn't
+
+**It does well at these:**
+
+- definitions, kinds, places, parts and opposites, read straight from the
+  word network;
+- "is X a Y" with the chain shown;
+- "the capital of France"-type questions when WordNet links them;
+- remembering what you tell it about yourself;
+- saying "I don't know" for words it doesn't have;
+- exact replay of any answer;
+- particles that are never destroyed.
+
+**Weak, or not working yet:**
+
+- **The wave mostly sorts by charge.** What the wave adds is noise in the
+  timing (which of the close facts peaks last) and drain (a fact's ring
+  losing lift to its neighbours). Distance matters only when the facts of
+  two words sit far apart. The variety is real, but it isn't the wave
+  "thinking". The order of a reply is the order of the peaks, so a
+  definition sometimes comes after a detail.
+- **Word senses:** always the most common sense. "won" in "who won" was
+  read as the Korean money (the verb rule only covers do/does/did
+  questions). "bank" will be the river bank.
+- **Partly known phrases** are answered from the known part ("quantum
+  blockchain" → quantum). It does say the other word is unknown, but it
+  should say it doesn't know the whole.
+- **"What is a dog?" gave no definition in either test run**, because the
+  definition's rings didn't peak in time. Raising the drive makes everything
+  peak and kills the variety. This trade-off is not solved.
+- **The phrasing is rule-based and stiff:**
+  - mass nouns get plurals ("Rains are a kind of precipitation");
+  - true WordNet facts can read oddly ("parts of a dog include a flag");
+  - long definitions are given whole;
+  - tense is not known ("Albert Einstein is one of the physicists").
+- **Questions it cannot read:** anything outside the asks listed in section
+  4 falls back to "the words it asks about". Questions about relations
+  WordNet lacks (who won, how many, why) only get "I don't know" plus
+  related knowledge.
+- **Memory** understands only the simple statement forms listed above, and
+  there is one user.
+- **GPU:** not used (see the start of this file).
+- **The viz** is a top view in the terminal (each column is its highest
+  ring; a lit `@` is a charged ring that reached its limit), not a 3D view.

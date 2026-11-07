@@ -1,10 +1,10 @@
-"""Aurelia command line.
+"""Particle maker command line.
 
-  python -m aurelia run --minutes 30 --stir spiral --seed 42
-  python -m aurelia vault list | vault show <id> | vault replay <id>
-  python -m aurelia bowl --stir all --seconds 20 --seed 1     (how many diamonds each stir makes)
-  python -m aurelia viz --stir spiral --seed 42 --seconds 12  (docs/bowl.gif and docs/bowl.png)
-  python -m aurelia viz --particle <id>                       (docs/assembly.gif: its copies binding)
+  python -m particle_maker run --minutes 30 --stir spiral --seed 42
+  python -m particle_maker vault list | vault show <id> | vault replay <id>
+  python -m particle_maker bowl --stir all --seconds 20 --seed 1     (how many diamonds each stir makes)
+  python -m particle_maker viz --stir spiral --seed 42 --seconds 12  (docs/bowl.gif and docs/bowl.png)
+  python -m particle_maker viz --particle <id>                       (docs/assembly.gif: its copies binding)
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from .bowl import STIRS
 
 
 def main(argv=None) -> None:
-    ap = argparse.ArgumentParser(prog="aurelia")
+    ap = argparse.ArgumentParser(prog="particle_maker")
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run", help="stir, form, test, keep, repeat")
     r.add_argument("--minutes", type=float, default=30)

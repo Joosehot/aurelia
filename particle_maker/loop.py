@@ -95,7 +95,7 @@ def run(minutes: float, stir: str, seed: int, batch: int = 32, vault_dir: str = 
     log = open(os.path.join(rdir, "log.jsonl"), "w")
     disc = open(os.path.join(rdir, "discarded.jsonl"), "w")
     vault = Vault(vault_dir)
-    print(f"Aurelia run {run_id}: {minutes} min, stir {stir}, seed {seed}, device {dev}")
+    print(f"Particle maker run {run_id}: {minutes} min, stir {stir}, seed {seed}, device {dev}")
     tasks = load_tasks()
     t_b = time.time()
     base = esn_baselines(tasks, dev, os.path.join(runs_dir, "cache"))

@@ -1,0 +1,15 @@
+[package]
+name = "aurelia"
+version = "0.1.0"
+edition = "2021"
+description = "A block of ring accelerators that answers from branded knowledge"
+license = "MIT"
+
+[dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+[profile.release]
+opt-level = 3
