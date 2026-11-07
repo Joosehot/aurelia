@@ -4,9 +4,9 @@
 wordnet = 'C:\Users\joose\Primogenitus\motor\data\wordnet\dict'
 
 [block]
-nx = 48            # lattice points; rings are the squares between them
-ny = 48
-nz = 8             # layers
+nx = 96            # lattice points; rings are the squares between them
+ny = 96
+nz = 42            # layers: 96x96x42 = 1.14 million particles, one for each sense, proposition and sentence
 particles_per_ring = 3
 layout_seed = 7    # which way each ring turns
 spin_base = 0.06   # a ring's own pace, rad per step
@@ -15,15 +15,15 @@ spin_drag = 0.04
 spin_max = 0.9
 flip_share = 0.15  # rings that turn against the checkerboard
 axle = 0.02        # spin shared between stacked layers
-wave_speed = 0.7   # ring widths per step
-wave_width = 2.5
+wave_speed = 2.0   # ring widths per step
+wave_width = 6.0
 wave_kick = 0.05
 wave_fronts = 12   # one message sends a train of fronts
 front_gap = 24
 idle_steps = 120   # the block turns on its own before each wave
 rise = 0.6        # lift per step per rad/step of spin above a ring's pace
 against_rise = 0.5 # a particle running against its ring rises this much slower
-limit_gain = 4.0   # a ring's limit = 1 + limit_gain * the highest charge it holds
+limit_gain = 10.0  # a ring's limit = 1 + limit_gain * the highest charge it holds
 window = 0.15      # how near two particles must be at a shared corner to collide (rad)
 lift_share = 0.08  # a collision evens this share of the lift difference
 mesh = 0.3         # a collision pushes the two spins this far toward meshing

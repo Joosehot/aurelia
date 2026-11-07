@@ -7,7 +7,9 @@
 
 mod block;
 mod engine;
+mod ethics;
 mod knowledge;
+mod store;
 mod wordnet;
 
 use anyhow::{bail, Context, Result};
@@ -42,6 +44,13 @@ fn load(cfg: &Config) -> Result<wordnet::WordNet> {
     let wn = wordnet::WordNet::read(Path::new(&dir)).with_context(|| format!("reading the word network at {dir}"))?;
     eprintln!("word network: {} senses, {} words ({:.1} s)", wn.synsets.len(), wn.index.len(), t.elapsed().as_secs_f32());
     Ok(wn)
+}
+
+fn load_store() -> Result<store::Store> {
+    let t = std::time::Instant::now();
+    let s = store::Store::load(&root().join("knowledge"))?;
+    eprintln!("world and book knowledge: {} items ({:.1} s)", s.items.len(), t.elapsed().as_secs_f32());
+    Ok(s)
 }
 
 fn new_run_dir() -> PathBuf {
@@ -101,7 +110,7 @@ fn engine() -> Result<Engine> {
     let cfg = config()?;
     let wn = load(&cfg)?;
     let dir = new_run_dir();
-    Ok(Engine::new(wn, cfg.block, dir))
+    Engine::new(wn, load_store()?, cfg.block, dir, root().join("brand"))
 }
 
 fn chat(viz: bool, seed: Option<u64>) -> Result<()> {
@@ -198,7 +207,8 @@ fn replay(dir: &Path, n: u32) -> Result<()> {
     let snap: Snapshot = serde_json::from_slice(&std::fs::read(dir.join(&orig.snapshot))?)?;
     let cfg = config()?;
     let wn = load(&cfg)?;
-    let mut e = Engine::new(wn, cfg.block, dir.join("replay"));
+    let mut e = Engine::new(wn, load_store()?, cfg.block, dir.join("replay"), root().join("brand"))?;
+    e.persist = false;
     e.load_snapshot(snap);
     let r = e.answer(&orig.message, orig.seed, None)?;
     println!("> {}", orig.message);

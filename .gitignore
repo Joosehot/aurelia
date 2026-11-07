@@ -6,3 +6,5 @@ runs/trial_vault/
 runs/run-*/discarded.jsonl
 target/
 runs/chat/
+brand/
+knowledge/

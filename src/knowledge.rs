@@ -30,6 +30,14 @@ pub enum Rel {
     Said,
     /// Aurelia about itself
     SelfNote,
+    /// a proposition of Simple English Wikipedia
+    World,
+    /// a sentence of Primo's word network
+    Primo,
+    /// a sentence of a philosophy book
+    Book,
+    /// a principle of the moral core
+    Ethic,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -39,6 +47,9 @@ pub enum Source {
     RelOf { of: (Pos, u32), found: (Pos, u32), class: String },
     Turn { said: String },
     SelfNote { line: usize },
+    /// row of the knowledge store (knowledge/world.tsv, then knowledge/books.tsv)
+    Store { row: u32 },
+    Ethic { line: usize },
 }
 
 /// The memory strike: where the fact came from, and the turn and word that brought it.
@@ -60,6 +71,9 @@ pub struct Fact {
     pub lexfile: u8,
     pub pos: Option<Pos>,
     pub strike: Strike,
+    /// the WordNet node this fact is said from: the synset it links to, or its own
+    #[serde(default)]
+    pub via: Option<(Pos, u32)>,
 }
 
 impl Fact {
@@ -89,6 +103,7 @@ pub fn self_facts() -> Vec<Fact> {
             lexfile: 0,
             pos: None,
             strike: Strike { source: Source::SelfNote { line: i }, turn: 0, cue: topic.to_string() },
+            via: None,
         })
         .collect()
 }
@@ -126,7 +141,7 @@ pub fn synset_facts(wn: &WordNet, pos: Pos, offset: u32, topic: &str, turn: u32,
     let subject = show(&subject_raw);
     let proper = subject.chars().next().map(|c| c.is_uppercase()).unwrap_or(false);
     let strike = Strike { source: Source::WordNet { pos, offset }, turn, cue: cue.to_string() };
-    let mk = |rel: Rel, object: Vec<String>| Fact {
+    let mk_via = |rel: Rel, object: Vec<String>, via: (Pos, u32)| Fact {
         rel,
         topic: topic.to_string(),
         subject: subject.clone(),
@@ -135,7 +150,9 @@ pub fn synset_facts(wn: &WordNet, pos: Pos, offset: u32, topic: &str, turn: u32,
         lexfile: s.lexfile,
         pos: Some(pos),
         strike: strike.clone(),
+        via: Some(via),
     };
+    let mk = |rel: Rel, object: Vec<String>| mk_via(rel, object, (pos, offset));
     let mut out = Vec::new();
     let (def, examples) = split_gloss(&s.gloss);
     if !def.is_empty() {
@@ -151,32 +168,32 @@ pub fn synset_facts(wn: &WordNet, pos: Pos, offset: u32, topic: &str, turn: u32,
     if !syn.is_empty() {
         out.push(mk(Rel::Synonym, syn));
     }
-    let mut parts = Vec::new();
-    let (mut part_of, mut member_of) = (0, 0);
+    let (mut part_of, mut member_of, mut parts) = (0, 0, 0);
     for p in &s.ptrs {
         let Some(w) = first_word(wn, p.target, 0) else { continue };
+        let at = p.target;
         match p.sym.as_str() {
-            "@" => out.push(mk(Rel::IsA, vec![w])),
-            "@i" => out.push(mk(Rel::InstanceOf, vec![w])),
+            "@" => out.push(mk_via(Rel::IsA, vec![w], at)),
+            "@i" => out.push(mk_via(Rel::InstanceOf, vec![w], at)),
             "#p" if part_of < 2 => {
                 part_of += 1;
-                out.push(mk(Rel::PartOf, vec![w]));
+                out.push(mk_via(Rel::PartOf, vec![w], at));
             }
             "#m" if member_of < 2 => {
                 member_of += 1;
-                out.push(mk(Rel::MemberOf, vec![w]));
+                out.push(mk_via(Rel::MemberOf, vec![w], at));
             }
-            "%p" if parts.len() < 4 => parts.push(w),
+            "%p" if parts < 4 => {
+                parts += 1;
+                out.push(mk_via(Rel::HasPart, vec![w], at));
+            }
             "!" => {
                 if let Some(a) = first_word(wn, p.target, p.tgt) {
-                    out.push(mk(Rel::Antonym, vec![a]));
+                    out.push(mk_via(Rel::Antonym, vec![a], at));
                 }
             }
             _ => {}
         }
-    }
-    if !parts.is_empty() {
-        out.push(mk(Rel::HasPart, parts));
     }
     for e in examples.into_iter().take(2) {
         out.push(mk(Rel::Example, vec![e]));
@@ -238,6 +255,7 @@ pub fn chain_fact(wn: &WordNet, path: &[(Pos, u32)], x: &str, y: &str, turn: u32
         lexfile: s0.lexfile,
         pos: Some(path[0].0),
         strike: Strike { source: Source::Chain { path: path.to_vec() }, turn, cue: cue.to_string() },
+        via: path.last().cloned(),
     }
 }
 
@@ -266,6 +284,7 @@ pub fn rel_of_fact(wn: &WordNet, of: (Pos, u32), found: (Pos, u32), class: &str,
         lexfile: fs.lexfile,
         pos: Some(Pos::N),
         strike: Strike { source: Source::RelOf { of, found, class: class.to_string() }, turn, cue: cue.to_string() },
+        via: Some(found),
     }
 }
 
@@ -299,6 +318,9 @@ pub fn verify(wn: &WordNet, f: &Fact) -> bool {
             }
         }
         Source::SelfNote { line } => SELF_NOTES.get(*line).map(|(_, t)| f.object.first().map(|o| o == t).unwrap_or(false)).unwrap_or(false),
+        Source::Ethic { line } => crate::ethics::PRINCIPLES.get(*line).map(|(t, _)| f.object.first().map(|o| o == t).unwrap_or(false)).unwrap_or(false),
+        // checked against the store by the engine, which holds it
+        Source::Store { .. } => false,
     }
 }
 
@@ -306,7 +328,9 @@ pub fn verify(wn: &WordNet, f: &Fact) -> bool {
 
 fn article(w: &str) -> String {
     let first = w.chars().next().unwrap_or('x').to_ascii_lowercase();
-    if "aeiou".contains(first) {
+    let lw = w.to_lowercase();
+    let sounds_y = ["one", "once", "uni", "use", "usu", "eu", "ewe"].iter().any(|p| lw.starts_with(p));
+    if "aeiou".contains(first) && !sounds_y {
         format!("an {w}")
     } else {
         format!("a {w}")
@@ -447,9 +471,9 @@ pub fn phrase(wn: &WordNet, f: &Fact, v: u8) -> String {
         }
         (Rel::MemberOf, _) => {
             if v == 0 || f.proper {
-                format!("{} is a member of {}", cap(&np(f)), o(0))
+                format!("{} is a member of {}", cap(&np(f)), np_of(&o(0)))
             } else {
-                format!("{} belong to {}", cap(&plural(wn, &f.subject)), o(0))
+                format!("{} belong to {}", cap(&plural(wn, &f.subject)), np_of(&o(0)))
             }
         }
         (Rel::Example, _) => {
@@ -501,6 +525,28 @@ pub fn phrase(wn: &WordNet, f: &Fact, v: u8) -> String {
             }
         }
         (Rel::SelfNote, _) => o(0),
+        (Rel::World, _) => {
+            if v == 0 {
+                o(0)
+            } else {
+                format!("From Wikipedia's article on {}: {}", o(1), o(0))
+            }
+        }
+        (Rel::Primo, _) => o(0),
+        (Rel::Book, _) => {
+            if v == 0 {
+                format!("In {}'s {}: \"{}\"", f.subject, o(1), o(0))
+            } else {
+                format!("{} ({}): \"{}\"", f.subject, o(1), o(0))
+            }
+        }
+        (Rel::Ethic, _) => {
+            if v == 0 {
+                o(0)
+            } else {
+                format!("My moral core holds: {}", o(0))
+            }
+        }
     };
     end(s)
 }

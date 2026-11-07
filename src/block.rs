@@ -48,7 +48,7 @@ impl Default for Cfg {
         Cfg {
             nx: 48,
             ny: 48,
-            nz: 8,
+            nz: 24,
             particles_per_ring: 3,
             layout_seed: 7,
             spin_base: 0.06,
@@ -188,6 +188,7 @@ impl Block {
     }
 
     /// The rings that share corner k of ring r, with the corner's index in each.
+    #[cfg_attr(not(test), allow(dead_code))]
     fn sharing(&self, r: usize, k: usize) -> [(i64, usize); 3] {
         let (i, j, z) = self.coords(r);
         let (i, j) = (i as i64, j as i64);
@@ -267,53 +268,166 @@ impl Block {
         (((self.cfg.wave_fronts - 1) * self.cfg.front_gap) as f32 + (far + self.cfg.wave_width) / self.cfg.wave_speed).ceil() as u32
     }
 
+    /// One step of the whole block. Rings touch only inside their layer, so the layers
+    /// turn in parallel (the same result on any number of threads); the axles between
+    /// layers come after.
     pub fn step(&mut self, wave: bool) {
         let c = self.cfg.clone();
-        let n = self.rings();
-        let pp = c.particles_per_ring;
         self.t += 1;
         let t = self.t;
+        let (rx, ry, pp) = (self.rx, self.ry, c.particles_per_ring);
+        let layer = rx * ry;
+        let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(self.rz).max(1);
+        let per = (self.rz + threads - 1) / threads * layer;
+        let mut total = 0u64;
+        std::thread::scope(|s| {
+            let mut jobs = Vec::new();
+            let chunks = self
+                .omega
+                .chunks_mut(per)
+                .zip(self.parts.chunks_mut(per * pp))
+                .zip(self.peak.chunks_mut(per))
+                .zip(self.base.chunks(per))
+                .zip(self.limit.chunks(per))
+                .zip(self.dist.chunks(per))
+                .zip(self.sign.chunks(per));
+            for ((((((om, pa), pk), ba), li), di), sg) in chunks {
+                let c = &c;
+                jobs.push(s.spawn(move || {
+                    let mut n = 0;
+                    for l in 0..om.len() / layer {
+                        let (r0, r1) = (l * layer, (l + 1) * layer);
+                        let mut lay = Layer {
+                            rx,
+                            ry,
+                            omega: &mut om[r0..r1],
+                            parts: &mut pa[r0 * pp..r1 * pp],
+                            peak: &mut pk[r0..r1],
+                            base: &ba[r0..r1],
+                            limit: &li[r0..r1],
+                            dist: &di[r0..r1],
+                            sign: &sg[r0..r1],
+                        };
+                        n += lay.step(c, t, wave);
+                    }
+                    n
+                }));
+            }
+            for j in jobs {
+                total += j.join().expect("a layer thread failed");
+            }
+        });
+        // the axles: stacked rings share spin
+        for r in layer..self.rings() {
+            let (a, b) = (self.omega[r - layer].abs(), self.omega[r].abs());
+            let d = c.axle * (a - b) * 0.5;
+            self.omega[r - layer] = self.omega[r - layer].signum() * (a - d);
+            self.omega[r] = self.omega[r].signum() * (b + d);
+        }
+        self.collisions += total;
+    }
+
+    /// Clockwork: both bounce, lift is shared, spins mesh. Destroys nothing.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn collide(&mut self, a: usize, b: usize, ra: usize, rb: usize) {
+        let t = self.t;
+        collide(&self.cfg, &mut self.parts, &mut self.omega, &self.limit, t, a, b, ra, rb);
+        self.collisions += 1;
+    }
+    /// The top particle of a ring: how far it has risen, as a share of the limit.
+    pub fn fill(&self, r: usize) -> f32 {
+        let pp = self.cfg.particles_per_ring;
+        self.parts[r * pp..(r + 1) * pp].iter().map(|p| p.h).fold(0.0, f32::max) / self.limit[r]
+    }
+}
+
+fn collide(c: &Cfg, parts: &mut [Particle], omega: &mut [f32], limit: &[f32], t: u32, a: usize, b: usize, ra: usize, rb: usize) {
+    parts[a].dir = -parts[a].dir;
+    parts[b].dir = -parts[b].dir;
+    parts[a].hit_at = t;
+    parts[b].hit_at = t;
+    let d = c.lift_share * (parts[a].h - parts[b].h) * 0.5;
+    parts[a].h = (parts[a].h - d).min(limit[ra]);
+    parts[b].h = (parts[b].h + d).min(limit[rb]);
+    let (wa, wb) = (omega[ra], omega[rb]);
+    omega[ra] = wa + c.mesh * (-wb - wa) * 0.5;
+    omega[rb] = wb + c.mesh * (-wa - wb) * 0.5;
+}
+
+/// One layer of rings, turned on its own thread.
+struct Layer<'a> {
+    rx: usize,
+    ry: usize,
+    omega: &'a mut [f32],
+    parts: &'a mut [Particle],
+    peak: &'a mut [i32],
+    base: &'a [f32],
+    limit: &'a [f32],
+    dist: &'a [f32],
+    sign: &'a [f32],
+}
+
+impl Layer<'_> {
+    /// The rings of this layer that share corner k of ring r, with the corner's index in each.
+    fn sharing(&self, r: usize, k: usize) -> [(i64, usize); 3] {
+        let (i, j) = ((r % self.rx) as i64, (r / self.rx) as i64);
+        let (px, py) = match k {
+            0 => (i + 1, j + 1),
+            1 => (i, j + 1),
+            2 => (i, j),
+            _ => (i + 1, j),
+        };
+        let around = [((px - 1, py - 1), 0usize), ((px, py - 1), 1), ((px, py), 2), ((px - 1, py), 3)];
+        let mut out = [(-1i64, 0usize); 3];
+        let mut n = 0;
+        for ((ci, cj), ck) in around {
+            if (ci, cj) == (i, j) {
+                continue;
+            }
+            if ci >= 0 && cj >= 0 && (ci as usize) < self.rx && (cj as usize) < self.ry {
+                out[n] = ((cj as usize * self.rx + ci as usize) as i64, ck);
+            }
+            n += 1;
+        }
+        out
+    }
+
+    fn step(&mut self, c: &Cfg, t: u32, wave: bool) -> u64 {
+        let n = self.omega.len();
+        let pp = c.particles_per_ring;
+        let mut hits = 0;
         // 1. the wave: every front passing a ring spins it up
         if wave {
-            for f in 0..c.wave_fronts {
-                let start = (f * c.front_gap) as f32;
-                if (t as f32) < start {
-                    continue;
-                }
-                let radius = (t as f32 - start) * c.wave_speed;
-                for r in 0..n {
-                    if (self.dist[r] - radius).abs() < c.wave_width * 0.5 {
+            let (tf, gap, half) = (t as f32, c.front_gap as f32, c.wave_width * 0.5);
+            for r in 0..n {
+                let d = self.dist[r];
+                let lo = ((tf - (d + half) / c.wave_speed) / gap).ceil().max(0.0) as i64;
+                let hi = (((tf - (d - half) / c.wave_speed) / gap).floor() as i64).min(c.wave_fronts as i64 - 1);
+                for f in lo..=hi {
+                    let start = f as f32 * gap;
+                    if tf >= start && (d - (tf - start) * c.wave_speed).abs() < half {
                         let s = self.omega[r].signum();
                         self.omega[r] += s * c.wave_kick;
                     }
                 }
             }
         }
-        // 2. drag back toward each ring's own pace, and the axles between layers
+        // 2. drag back toward each ring's own pace
         for r in 0..n {
             let s = if self.omega[r] == 0.0 { self.sign[r] } else { self.omega[r].signum() };
             let mag = self.omega[r].abs();
-            let mag = (mag - c.spin_drag * (mag - self.base[r])).clamp(0.0, c.spin_max);
-            self.omega[r] = s * mag;
-        }
-        let layer = self.rx * self.ry;
-        for r in layer..n {
-            let (a, b) = (self.omega[r - layer].abs(), self.omega[r].abs());
-            let d = c.axle * (a - b) * 0.5;
-            self.omega[r - layer] = self.omega[r - layer].signum() * (a - d);
-            self.omega[r] = self.omega[r].signum() * (b + d);
+            self.omega[r] = s * (mag - c.spin_drag * (mag - self.base[r])).clamp(0.0, c.spin_max);
         }
         // 3. particles orbit; a particle passing a corner meets whatever is at that corner
         for r in 0..n {
             for q in 0..pp {
                 let idx = r * pp + q;
                 let old = self.parts[idx].theta;
-                let new = wrap(old + self.omega[r] * self.parts[idx].dir);
-                self.parts[idx].theta = new;
+                let delta = self.omega[r] * self.parts[idx].dir;
+                self.parts[idx].theta = wrap(old + delta);
                 if self.parts[idx].hit_at == t {
                     continue;
                 }
-                let delta = self.omega[r] * self.parts[idx].dir;
                 let Some(k) = (0..4).find(|&k| crossed(old, delta, corner_angle(k))) else { continue };
                 for (other, ok) in self.sharing(r, k) {
                     if other < 0 {
@@ -321,9 +435,12 @@ impl Block {
                     }
                     let other = other as usize;
                     let target = corner_angle(ok);
-                    let hit = (0..pp).map(|w| other * pp + w).find(|&j| self.parts[j].hit_at != t && ang_dist(self.parts[j].theta, target) < c.window);
+                    let hit = (0..pp)
+                        .map(|w| other * pp + w)
+                        .find(|&j| self.parts[j].hit_at != t && ang_dist(self.parts[j].theta, target) < c.window);
                     if let Some(j) = hit {
-                        self.collide(idx, j, r, other);
+                        collide(c, self.parts, self.omega, self.limit, t, idx, j, r, other);
+                        hits += 1;
                         break;
                     }
                 }
@@ -339,36 +456,12 @@ impl Block {
                 let p = &mut self.parts[r * pp + q];
                 let gain = if p.dir > 0.0 { 1.0 } else { c.against_rise };
                 p.h = (p.h + c.rise * ex * gain).min(self.limit[r]);
-                if p.h >= self.limit[r] - 1e-6 && self.peak[r] < 0 && wave {
+                if wave && p.h >= self.limit[r] - 1e-6 && self.peak[r] < 0 {
                     self.peak[r] = t as i32;
                 }
             }
         }
-    }
-
-    /// Clockwork: both bounce, lift is shared, spins mesh. Returns nothing; destroys nothing.
-    pub fn collide(&mut self, a: usize, b: usize, ra: usize, rb: usize) {
-        let c = &self.cfg;
-        let t = self.t;
-        self.parts[a].dir = -self.parts[a].dir;
-        self.parts[b].dir = -self.parts[b].dir;
-        self.parts[a].hit_at = t;
-        self.parts[b].hit_at = t;
-        let d = c.lift_share * (self.parts[a].h - self.parts[b].h) * 0.5;
-        self.parts[a].h -= d;
-        self.parts[b].h += d;
-        self.parts[a].h = self.parts[a].h.min(self.limit[ra]);
-        self.parts[b].h = self.parts[b].h.min(self.limit[rb]);
-        let (wa, wb) = (self.omega[ra], self.omega[rb]);
-        self.omega[ra] = wa + c.mesh * (-wb - wa) * 0.5;
-        self.omega[rb] = wb + c.mesh * (-wa - wb) * 0.5;
-        self.collisions += 1;
-    }
-
-    /// The top particle of a ring: how far it has risen, as a share of the limit.
-    pub fn fill(&self, r: usize) -> f32 {
-        let pp = self.cfg.particles_per_ring;
-        self.parts[r * pp..(r + 1) * pp].iter().map(|p| p.h).fold(0.0, f32::max) / self.limit[r]
+        hits
     }
 }
 
