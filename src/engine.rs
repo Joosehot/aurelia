@@ -84,6 +84,10 @@ pub enum Ask {
     AreYou { word: String, x: Option<Topic> },
     /// "what do you want to talk about?"
     Topic,
+    /// "want to know what happened today?"
+    Offer,
+    /// "today I went to the market"
+    Told { clause: String, when: String },
     /// a social move no act or knowledge answers: a human reply from the dialog corpus
     Social { keys: Vec<String> },
     /// which is better, X or Y: no ranking, a comparison
@@ -1052,6 +1056,26 @@ impl Engine {
         if pick.iter().any(|p| s.contains(p)) && (s.starts_with("what") || s.starts_with("you") || s.starts_with("pick")) {
             return Some(Ask::Topic);
         }
+        // "want to know what happened today?", "guess what", "let me tell you": an offer to tell her
+        let offer = ["want to know", "want to hear", "wanna know", "wanna hear", "can i tell you", "let me tell you", "guess what", "may i tell you", "shall i tell you", "you know what"];
+        if offer.iter().any(|p| s.starts_with(p) || s.starts_with(&format!("do you {p}")) || s.starts_with(&format!("would you {p}")) || s.contains(&format!("you {p}"))) {
+            return Some(Ask::Offer);
+        }
+        // "today I went to the market": something told, to be remembered
+        if !msg.trim_end().ends_with('?') {
+            let start = w.iter().position(|x| x == "i").filter(|&k| k == 0 || w[..k].iter().all(|x| matches!(x.as_str(), "today" | "yesterday" | "so" | "well" | "and" | "this" | "morning" | "tonight" | "earlier" | "then" | "last" | "night" | "week")));
+            if let Some(k) = start {
+                if let Some(v) = w[k + 1..].iter().find(|x| !talk::SOFT.contains(&x.as_str())) {
+                    // "saw" is "see" before it is "to saw": the irregular forms first
+                    let irregular = self.wn.exc.get(&(Pos::V, v.clone())).map(|b| b != v).unwrap_or(false);
+                    let past = irregular || self.wn.base(v, Pos::V).map(|b| &b != v && v.ends_with("ed")).unwrap_or(false);
+                    if past && !w.contains(&"you".to_string()) {
+                        let clause = o[k..].join(" ");
+                        return Some(Ask::Told { clause, when: w[..k].join(" ") });
+                    }
+                }
+            }
+        }
         // "need another kiss?", "want a cookie?": the question about her, said short
         if matches!(w[0].as_str(), "need" | "want" | "wanna" | "like") && w.len() >= 2 {
             let verb = if w[0] == "wanna" { "want".to_string() } else { w[0].clone() };
@@ -1277,9 +1301,33 @@ impl Engine {
                         let kind = talk::verb_kind(&self.wn, &v).unwrap_or("touch".into());
                         vec![format!("No. To {v} is to {kind}, and that takes a body. {}", lacks(self, "body"))]
                     }
+                    // "do you remember what I told you?": what the speaker gave her
+                    "know" | "remember" if ["told", "said", "say", "tell", "me", "i"].iter().any(|x| word.split(' ').any(|w| w == *x)) => {
+                        let mem: Vec<String> = self
+                            .facts
+                            .iter()
+                            .rev()
+                            .filter(|f| f.rel == Rel::Memory && !matches!(f.subject.as_str(), "am"))
+                            .take(4)
+                            .map(|f| phrase(&self.wn, f, 0))
+                            .collect();
+                        if mem.is_empty() {
+                            vec!["You haven't told me anything about yourself yet.".into()]
+                        } else {
+                            vec![format!("Yes{}. {}", to(&name), mem.join(" "))]
+                        }
+                    }
                     "know" | "remember" => vec![self.note("self:know")?],
                     _ => vec![self.note("self:can")?],
                 }
+            }
+            Ask::Offer => vec![format!("Yes{}. {}", to(&name), self.note("self:listen")?)],
+            Ask::Told { clause, when } => {
+                let f = self.turn_fact(Rel::Memory, "you:told", "told", vec![clause.clone()], msg.trim());
+                self.brand(f);
+                let back = knowledge::swap_person(clause);
+                let when = if when.is_empty() { String::new() } else { format!(" {when}") };
+                vec![format!("{}{when}{}. I'll remember that.", infer::cap(&back), to(&name))]
             }
             Ask::Topic => {
                 // offer what the asker gave her: what they like, have or love; else their feeling
@@ -1652,7 +1700,7 @@ impl Engine {
         let topic_ring = |e: &Engine, t: &Topic| e.node_of.get(&(t.pos, t.offset)).and_then(|&n| e.node_ring(n));
         // an act of talk is answered from herself, the speaker and the word network
         let act_words = match &ask {
-            Ask::Greet | Ask::Introduce { .. } | Ask::WhoAmI | Ask::Feeling { .. } | Ask::ActOnMe { .. } | Ask::AboutMe { .. } | Ask::AreYou { .. } | Ask::Topic => {
+            Ask::Greet | Ask::Introduce { .. } | Ask::WhoAmI | Ask::Feeling { .. } | Ask::ActOnMe { .. } | Ask::AboutMe { .. } | Ask::AreYou { .. } | Ask::Topic | Ask::Offer | Ask::Told { .. } => {
                 let a = ask.clone();
                 self.answer_act(&a, msg)
             }
@@ -1663,7 +1711,7 @@ impl Engine {
             reading = false;
         }
         match &ask {
-            Ask::Greet | Ask::Introduce { .. } | Ask::WhoAmI | Ask::Feeling { .. } | Ask::ActOnMe { .. } | Ask::AboutMe { .. } | Ask::AreYou { .. } | Ask::Topic => {
+            Ask::Greet | Ask::Introduce { .. } | Ask::WhoAmI | Ask::Feeling { .. } | Ask::ActOnMe { .. } | Ask::AboutMe { .. } | Ask::AreYou { .. } | Ask::Topic | Ask::Offer | Ask::Told { .. } => {
                 if before.is_empty() {
                     before.push("I don't know what you are asking.".into());
                 }

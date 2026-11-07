@@ -561,6 +561,35 @@ pub fn phrase(wn: &WordNet, f: &Fact, v: u8) -> String {
     end(s)
 }
 
+/// The speaker's words turned to her side: "I went to my mother's" -> "you went to your mother's".
+pub fn swap_person(s: &str) -> String {
+    let words: Vec<String> = s
+        .split_whitespace()
+        .map(|w| {
+            let core = w.trim_end_matches(|c: char| !c.is_alphanumeric() && c != '\'');
+            let tail = &w[core.len()..];
+            let swapped = match core.to_lowercase().as_str() {
+                "i" => "you".to_string(),
+                "i'm" => "you're".to_string(),
+                "i've" => "you've".to_string(),
+                "i'll" => "you'll".to_string(),
+                "i'd" => "you'd".to_string(),
+                "me" => "you".to_string(),
+                "my" => "your".to_string(),
+                "mine" => "yours".to_string(),
+                "myself" => "yourself".to_string(),
+                "am" => "are".to_string(),
+                "was" => "were".to_string(),
+                "you" => "me".to_string(),
+                "your" => "my".to_string(),
+                _ => core.to_string(),
+            };
+            format!("{swapped}{tail}")
+        })
+        .collect();
+    words.join(" ").trim_end_matches(['.', '!']).to_string()
+}
+
 fn memory_phrase(f: &Fact, v: u8) -> String {
     let val = f.object.first().cloned().unwrap_or_default();
     let key = f.subject.as_str();
@@ -569,6 +598,7 @@ fn memory_phrase(f: &Fact, v: u8) -> String {
         "like" | "love" | "have" => (format!("You {key} {val}"), format!("You told me you {key} {val}")),
         "live in" => (format!("You live in {val}"), format!("You told me you live in {val}")),
         "did" => (format!("You {val} me"), format!("You told me you {val} me")),
+        "told" => (format!("You told me {}", swap_person(&val)), format!("You said {}", swap_person(&val))),
         "feel" => (format!("You felt {val}"), format!("You told me you felt {val}")),
         "role" => (format!("You are my {val}"), format!("You told me you are my {val}")),
         k => (format!("Your {k} is {val}"), format!("You told me your {k} is {val}")),
