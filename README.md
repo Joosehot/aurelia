@@ -187,6 +187,34 @@ These answers come from the talk layer, not from the wave's last peaks. The
 wave still rolls, but the act is answered from her self notes and memory,
 each checked.
 
+### Human replies from an open dialog corpus
+
+When neither an act of talk nor the knowledge answers a social message
+("haha", "that is so cool", "you're smart", "I'll give you a virtual kiss"),
+the reply comes from people: **Topical-Chat** (Amazon, Gopalakrishnan et al.
+2019), 10 784 human-human conversations under the **Community Data License
+Agreement - Sharing 1.0**, which allows commercial use.
+
+- **Where it lives.** The data is in `dialog/topical_chat/` (not in the
+  repository) with its `DATALICENSE`. It is downloaded unchanged from
+  github.com/alexa/Topical-Chat. No non-commercial data is used.
+- **What is kept.** Only replies that do something in the talk survive: they
+  react, thank, ask back, open or close. That is 14 937 of 235 281
+  utterances. A reply is dropped when it:
+  - names a thing;
+  - has a number or a name;
+  - makes a first-person claim ("I live…", "I love…"), since Aurelia has no
+    life or likes to report;
+  - is longer than 14 words.
+- **How it is said.** Each kept reply is branded onto a particle with the turn
+  it answered. A message charges the replies whose turn shares its rarest
+  words, and the wave picks one. A reply is still dropped when it brings in a
+  thing the message didn't name, or a pronoun for something said in another
+  conversation.
+- **Honest.** The corpus is chat about news articles, so its social replies
+  are mostly generic ("Nice chatting with you!", "No kidding.") and
+  sometimes miss.
+
 ## 5. The moral core (hardcoded)
 
 `src/ethics.rs` holds twelve principles. The first three are Devil's

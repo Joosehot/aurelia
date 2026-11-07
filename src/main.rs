@@ -50,10 +50,13 @@ fn load(cfg: &Config) -> Result<wordnet::WordNet> {
     Ok(wn)
 }
 
-fn load_store() -> Result<store::Store> {
+fn load_store(wn: &wordnet::WordNet) -> Result<store::Store> {
     let t = std::time::Instant::now();
-    let s = store::Store::load(&root().join("knowledge"))?;
-    eprintln!("world and book knowledge: {} items ({:.1} s)", s.items.len(), t.elapsed().as_secs_f32());
+    let mut s = store::Store::load(&root().join("knowledge"))?;
+    let n = s.items.len();
+    // the human replies of Topical-Chat (CDLA-Sharing 1.0), social moves only
+    s.items.extend(store::load_dialog(&root().join("dialog").join("topical_chat"), wn)?);
+    eprintln!("world and book knowledge: {} items, dialog: {} replies ({:.1} s)", n, s.items.len() - n, t.elapsed().as_secs_f32());
     Ok(s)
 }
 
@@ -115,7 +118,7 @@ fn engine() -> Result<Engine> {
     let cfg = config()?;
     let wn = load(&cfg)?;
     let dir = new_run_dir();
-    Engine::new(wn, load_store()?, cfg.block, dir, root().join("brand"))
+    { let s = load_store(&wn)?; Engine::new(wn, s, cfg.block, dir, root().join("brand")) }
 }
 
 fn chat(viz: bool, seed: Option<u64>) -> Result<()> {
@@ -284,7 +287,8 @@ fn replay(dir: &Path, n: u32) -> Result<()> {
     let snap: Snapshot = serde_json::from_slice(&std::fs::read(dir.join(&orig.snapshot))?)?;
     let cfg = config()?;
     let wn = load(&cfg)?;
-    let mut e = Engine::new(wn, load_store()?, cfg.block, dir.join("replay"), root().join("brand"))?;
+    let s = load_store(&wn)?;
+    let mut e = Engine::new(wn, s, cfg.block, dir.join("replay"), root().join("brand"))?;
     e.persist = false;
     e.load_snapshot(snap);
     let r = e.answer(&orig.message, orig.seed, None)?;

@@ -6,7 +6,7 @@ wordnet = 'C:\Users\joose\Primogenitus\motor\data\wordnet\dict'
 [block]
 nx = 96            # lattice points; rings are the squares between them
 ny = 96
-nz = 42            # layers: 96x96x42 = 1.14 million particles, one for each sense, proposition and sentence
+nz = 44            # layers: 96x96x44 = 1.19 million particles, one for each sense, proposition, sentence and dialog reply
 particles_per_ring = 3
 layout_seed = 7    # which way each ring turns
 spin_base = 0.06   # a ring's own pace, rad per step

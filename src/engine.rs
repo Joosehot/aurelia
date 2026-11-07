@@ -84,6 +84,8 @@ pub enum Ask {
     AreYou { word: String, x: Option<Topic> },
     /// "what do you want to talk about?"
     Topic,
+    /// a social move no act or knowledge answers: a human reply from the dialog corpus
+    Social { keys: Vec<String> },
     /// which is better, X or Y: no ranking, a comparison
     Rank { things: Vec<Topic> },
     Nothing,
@@ -177,6 +179,9 @@ pub struct Engine {
 struct Memory {
     turn: u32,
     facts: Vec<Fact>,
+    /// how many knowledge nodes the block was branded with; another count brands it anew, keeping the talk
+    #[serde(default)]
+    knowledge: usize,
 }
 
 const STOP: &[&str] = &[
@@ -352,12 +357,21 @@ impl Engine {
             );
         }
         let parts_file = e.brand_dir.join("particles.bin");
-        if parts_file.exists() {
+        let old: Option<Memory> = std::fs::read(e.brand_dir.join("memory.json")).ok().and_then(|b| serde_json::from_slice(&b).ok());
+        let same = parts_file.exists()
+            && std::fs::metadata(&parts_file).map(|m| m.len() as usize == e.block.parts.len() * 4).unwrap_or(false)
+            && old.as_ref().map(|m| m.knowledge == knowledge).unwrap_or(false);
+        let mut keep: Vec<Fact> = Vec::new();
+        let mut keep_turn = 0;
+        if !same {
+            if let Some(m) = old {
+                keep = m.facts;
+                keep_turn = m.turn;
+            }
+        }
+        if same {
             let bytes = std::fs::read(&parts_file)?;
             let mem: Memory = serde_json::from_slice(&std::fs::read(e.brand_dir.join("memory.json"))?)?;
-            if bytes.len() != e.block.parts.len() * 4 {
-                anyhow::bail!("{} was branded on a block of another size; move it away to brand anew", parts_file.display());
-            }
             e.facts = mem.facts;
             e.turn = mem.turn;
             e.keys = e.facts.iter().enumerate().map(|(i, f)| (f.key(), i as u32)).collect();
@@ -402,6 +416,7 @@ impl Engine {
                         Role::Subject => 3,
                         Role::InArticle => 4,
                         Role::BookMentions => 5,
+                        Role::DialogPrompt => 6,
                     };
                     let slot = &mut about[s + i as usize];
                     if (rank, key) < (slot.0, &slot.1) {
@@ -437,6 +452,11 @@ impl Engine {
             for f in ethic_facts() {
                 e.brand(f);
             }
+            // what the talk branded on the block before stays branded on the new one
+            for f in keep.drain(..) {
+                e.brand(f);
+            }
+            e.turn = keep_turn;
             std::fs::create_dir_all(&e.brand_dir)?;
             std::fs::write(e.brand_dir.join("index.json"), serde_json::to_vec(&e.index)?)?;
             e.save_brand()?;
@@ -459,7 +479,8 @@ impl Engine {
             bytes.extend_from_slice(&p.fact.unwrap_or(FREE).to_le_bytes());
         }
         std::fs::write(self.brand_dir.join("particles.bin"), bytes)?;
-        std::fs::write(self.brand_dir.join("memory.json"), serde_json::to_vec(&Memory { turn: self.turn, facts: self.facts.clone() })?)?;
+        let knowledge = self.nodes.len() + self.store.items.len();
+        std::fs::write(self.brand_dir.join("memory.json"), serde_json::to_vec(&Memory { turn: self.turn, facts: self.facts.clone(), knowledge })?)?;
         Ok(())
     }
 
@@ -479,6 +500,7 @@ impl Engine {
                 Src::Wikipedia => Rel::World,
                 Src::Primo => Rel::Primo,
                 Src::Book => Rel::Book,
+                Src::Dialog => Rel::Dialog,
             },
             topic: cue.to_string(),
             subject: it.who.clone(),
@@ -534,7 +556,7 @@ impl Engine {
                         0.7
                     }
                 }
-                (_, Role::BookMentions) => 0.0,
+                (_, Role::BookMentions | Role::DialogPrompt) => 0.0,
             };
             if c > 0.0 {
                 out.push((i, if short { c } else { c - 0.05 }));
@@ -947,9 +969,40 @@ impl Engine {
             }
         }
         let Some(pick) = kept.iter().find(|k| k.2).or(kept.last()).cloned() else {
-            return if tokens(msg).0.is_empty() && !named { Ask::Nothing } else { Ask::Greet };
+            // only the talk's own words ("haha", "ok then"): answered as talk; her name alone is a greeting
+            return if tokens(msg).0.is_empty() && !named {
+                Ask::Nothing
+            } else if all.iter().all(|x| x == "aurelia") {
+                Ask::Greet
+            } else {
+                Ask::Social { keys: all.clone() }
+            };
         };
-        self.read_words(pick.0, pick.1, pick.2)
+        let words = pick.0.clone();
+        let ask = self.read_words(pick.0, pick.1, pick.2);
+        // what neither an act of talk nor the knowledge answers, said socially, gets a human reply
+        match ask {
+            Ask::About { .. } | Ask::Unknown { .. } | Ask::Nothing if self.social(msg, &words, &all) => {
+                Ask::Social { keys: all.iter().map(|x| [Pos::N, Pos::V, Pos::A].iter().find_map(|&p| self.wn.base(x, p)).unwrap_or(x.clone())).collect() }
+            }
+            a => a,
+        }
+    }
+
+    /// Is the message a social move rather than a question about the world?
+    fn social(&self, msg: &str, words: &[String], all: &[String]) -> bool {
+        const START: &[&str] = &[
+            "wow", "haha", "lol", "cool", "nice", "great", "awesome", "thanks", "thank", "yes", "no", "nope", "yeah", "sure", "sorry",
+            "oh", "aww", "hmm", "really", "but", "so", "ok", "okay", "lmao", "omg", "same", "true", "agreed", "interesting", "amazing",
+            "good", "fine", "well", "hehe", "yay", "ugh", "that", "this", "it", "thats", "lovely", "sweet", "perfect", "exactly",
+        ];
+        let first = words.first().map(|x| x.as_str()).unwrap_or("");
+        if qword(first).is_some() || matches!(first, "is" | "are" | "does" | "do" | "did" | "can" | "was" | "were" | "define" | "tell") {
+            return false;
+        }
+        let personal = all.iter().any(|x| matches!(x.as_str(), "you" | "your" | "we" | "us" | "me" | "yourself"));
+        let first_all = all.first().map(|x| x.as_str()).unwrap_or("");
+        personal || msg.trim_end().ends_with('!') || START.contains(&first_all)
     }
 
     /// The act of talk a message is, if it is one (src/talk.rs).
@@ -963,12 +1016,14 @@ impl Engine {
                 o.push(y);
             }
         }
+        let said: Vec<String> = w.clone();
         while w.first().map(|x| matches!(x.as_str(), "oh" | "ok" | "okay" | "well" | "so" | "um" | "alright" | "yeah" | "wow")).unwrap_or(false) {
             w.remove(0);
             o.remove(0);
         }
         if w.is_empty() {
-            return None;
+            // "wow", "ok": only the talk's own words, answered as talk
+            return if said.is_empty() { None } else { Some(Ask::Social { keys: said }) };
         }
         let s = w.join(" ");
         const GREET: &[&str] = &["hello", "hi", "hey", "greetings", "moi", "terve", "yo", "howdy", "hiya"];
@@ -1058,6 +1113,11 @@ impl Engine {
             let rest = strip_articles(&w[2..]);
             if rest.is_empty() {
                 return None;
+            }
+            // "you are sweet": a word said of her, not a question of what kind she is
+            const LIFE_MOOD: &[&str] = &["alive", "living", "human", "conscious", "sentient", "ok", "okay", "fine", "well", "happy", "sad", "tired", "alright", "good", "lonely", "angry", "bored"];
+            if rest.len() == 1 && !LIFE_MOOD.contains(&rest[0].as_str()) && self.wn.base(&rest[0], Pos::A).is_some() && !rest[0].ends_with("er") {
+                return Some(Ask::Social { keys: w.clone() });
             }
             let x = self.look_as(&rest, &[Pos::N, Pos::A]);
             return Some(Ask::AreYou { word: rest.join(" "), x });
@@ -1212,6 +1272,11 @@ impl Engine {
                     }
                     "feel" => vec![lacks(self, "feeling")],
                     "eat" | "drink" | "sleep" | "breathe" | "dream" => vec![format!("No. To {v} takes a body. {}", lacks(self, "body"))],
+                    // "do you want to kiss me": an act of the body
+                    _ if self.wn.senses(&v, Pos::V).first().and_then(|o| talk::bodily(&self.wn, (Pos::V, *o))).is_some() => {
+                        let kind = talk::verb_kind(&self.wn, &v).unwrap_or("touch".into());
+                        vec![format!("No. To {v} is to {kind}, and that takes a body. {}", lacks(self, "body"))]
+                    }
                     "know" | "remember" => vec![self.note("self:know")?],
                     _ => vec![self.note("self:can")?],
                 }
@@ -1782,6 +1847,46 @@ impl Engine {
                     }
                 }
                 take = 3;
+            }
+            Ask::Social { keys } => {
+                // the human replies whose turn shares the most (and rarest) words with this one
+                let mut score: HashMap<u32, f32> = HashMap::new();
+                for k in keys {
+                    let Some(entries) = self.index.get(&format!("dlg:{k}")) else { continue };
+                    if entries.len() > 20_000 {
+                        continue;
+                    }
+                    let idf = 1.0 / (1.0 + (entries.len() as f32).ln());
+                    for &(i, _) in entries.iter().take(4000) {
+                        *score.entry(i).or_insert(0.0) += idf;
+                    }
+                }
+                let mut best: Vec<(u32, f32)> = score.into_iter().collect();
+                best.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap().then(a.0.cmp(&b.0)));
+                best.truncate(300);
+                let top = best.first().map(|x| x.1).unwrap_or(1.0).max(1e-6);
+                let s = self.nodes.len() as u32;
+                // a reply that brings in a thing the message didn't name ("do you know much about fish?")
+                // belongs to another talk
+                let mine: std::collections::HashSet<&String> = keys.iter().collect();
+                best.retain(|(i, _)| {
+                    let ws = store::words(&self.store.items[*i as usize].text);
+                    // "are they expensive though?": a pronoun for something said in another talk
+                    let elsewhere = ws.iter().any(|w| matches!(w.as_str(), "they" | "them" | "their" | "he" | "she" | "his" | "her" | "him" | "those" | "these" | "theirs"));
+                    !elsewhere && ws.iter().all(|w| {
+                        let n = self.wn.base(w, Pos::N);
+                        n.is_none() || store::SOCIAL_NOUNS.contains(&w.as_str()) || self.wn.base(w, Pos::A).is_some() || mine.contains(n.as_ref().unwrap()) || mine.contains(w)
+                    })
+                });
+                for (i, sc) in best {
+                    let f = self.item_fact(i, "dialog");
+                    put(&mut charge, &mut say, s + i, 0.55 + 0.4 * sc / top, Some(f));
+                }
+                if charge.is_empty() {
+                    before.push("I don't know what you are asking.".into());
+                    reading = false;
+                }
+                take = 1;
             }
             Ask::Opinion => {
                 before.push("I can't judge that. All I hold is what the word network and you have told me, and none of it is an opinion. Ask me what one of them is.".into());

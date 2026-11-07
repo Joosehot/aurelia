@@ -38,6 +38,8 @@ pub enum Rel {
     Book,
     /// a principle of the moral core
     Ethic,
+    /// a human reply from Topical-Chat
+    Dialog,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -540,6 +542,7 @@ pub fn phrase(wn: &WordNet, f: &Fact, v: u8) -> String {
             }
         }
         (Rel::Primo, _) => o(0),
+        (Rel::Dialog, _) => o(0),
         (Rel::Book, _) => {
             if v == 0 {
                 format!("In {}'s {}: \"{}\"", f.subject, o(1), o(0))

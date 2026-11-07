@@ -17,6 +17,8 @@ pub enum Src {
     Wikipedia,
     Primo,
     Book,
+    /// a human reply from Topical-Chat (CDLA-Sharing 1.0), with the turn it answered as `subj`
+    Dialog,
 }
 
 pub struct Item {
@@ -53,6 +55,8 @@ pub enum Role {
     BookSays,
     /// a book sentence that uses the word
     BookMentions,
+    /// a dialog reply whose prompt uses the word
+    DialogPrompt,
 }
 
 pub type Index = HashMap<String, Vec<(u32, Role)>>;
@@ -103,10 +107,90 @@ impl Store {
     }
 }
 
+/// Words a social reply may carry without making a claim about the world.
+pub const SOCIAL_NOUNS: &[&str] = &[
+    "thing", "things", "way", "idea", "point", "time", "chat", "talk", "day", "night", "fun", "kiss", "hug", "lot", "bit", "sense",
+    "question", "answer", "pleasure", "luck", "care", "joke", "deal", "guess", "chance", "morning", "evening", "kind", "sort", "stuff",
+    "favorite", "problem", "worries", "worry", "story", "thought", "thoughts", "friend", "wow", "lol", "haha", "yes", "yeah", "hello",
+    "hi", "hey", "thanks", "thank", "bye", "goodbye", "conversation", "word", "one", "today", "too", "fact", "facts", "news",
+];
+/// First-person claims Aurelia cannot make: she has no life, no likes, no past.
+const CLAIMS: &[&str] = &[
+    "my", "mine", "we", "our", "i have", "i had", "i was", "i went", "i live", "i've", "i work", "i love", "i like", "i hate",
+    "i feel", "i watched", "i read", "i saw", "i heard", "i remember", "i grew", "i used", "i play", "i own", "i'm", "i am",
+    "i did", "i do like", "i enjoy", "i miss", "i want", "i wish", "i would", "i'd", "i got", "i get", "i need", "i listen",
+    "i watch", "i think i", "me too", "i also", "i never", "i always", "i usually", "i sometimes",
+];
+
+/// The human replies from Topical-Chat that Aurelia may say: social moves only.
+pub fn load_dialog(dir: &Path, wn: &WordNet) -> Result<Vec<Item>> {
+    let mut out = Vec::new();
+    for name in ["train", "valid_freq", "valid_rare", "test_freq", "test_rare"] {
+        let path = dir.join(format!("{name}.json"));
+        if !path.exists() {
+            continue;
+        }
+        let v: serde_json::Value = serde_json::from_slice(&std::fs::read(&path)?)?;
+        let Some(convs) = v.as_object() else { continue };
+        let mut ids: Vec<&String> = convs.keys().collect();
+        ids.sort();
+        for id in ids {
+            let Some(turns) = convs[id].get("content").and_then(|c| c.as_array()) else { continue };
+            for k in 1..turns.len() {
+                let prompt = turns[k - 1].get("message").and_then(|m| m.as_str()).unwrap_or("").trim().to_string();
+                let reply = turns[k].get("message").and_then(|m| m.as_str()).unwrap_or("").trim().to_string();
+                if social(wn, &reply) && !prompt.is_empty() && prompt.split_whitespace().count() <= 25 {
+                    out.push(Item {
+                        src: Src::Dialog,
+                        who: "Topical-Chat".into(),
+                        work: format!("Topical-Chat {name}"),
+                        locator: format!("{id} turn {k}"),
+                        kind: String::new(),
+                        subj: prompt,
+                        text: reply,
+                        verb: String::new(),
+                        neg: false,
+                        pred: String::new(),
+                    });
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// A reply that does something in the talk (reacts, thanks, asks back, opens, closes)
+/// without claiming anything about the world or about a life Aurelia doesn't have.
+fn social(wn: &WordNet, reply: &str) -> bool {
+    let n = reply.split_whitespace().count();
+    if !(2..=14).contains(&n) || reply.chars().any(|c| c.is_ascii_digit()) || reply.contains("http") {
+        return false;
+    }
+    // no names: a capital only at the start of a sentence, or "I"
+    let mut start = true;
+    for w in reply.split_whitespace() {
+        let c = w.chars().next().unwrap_or('a');
+        if c.is_uppercase() && !start && w.trim_matches(|x: char| !x.is_alphabetic()) != "I" {
+            return false;
+        }
+        start = w.ends_with('.') || w.ends_with('!') || w.ends_with('?');
+    }
+    let low = format!(" {} ", reply.to_lowercase().replace(['.', ',', '!', '?', ';', ':'], " "));
+    if CLAIMS.iter().any(|c| low.contains(&format!(" {c} "))) {
+        return false;
+    }
+    // no thing named that the talk would have to know about
+    let ws = words(reply);
+    !ws.iter().any(|w| {
+        w.len() > 2 && !SOCIAL_NOUNS.contains(&w.as_str()) && !CUT.contains(&w.as_str()) && !ARTICLES.contains(&w.as_str())
+            && wn.base(w, Pos::N).is_some() && wn.base(w, Pos::V).is_none() && wn.base(w, Pos::A).is_none()
+    })
+}
+
 const CUT: &[&str] = &["of", "in", "on", "at", "for", "with", "from", "by", "to", "that", "which", "who", "whose", "and", "or", "as"];
 const ARTICLES: &[&str] = &["the", "a", "an", "this", "that", "these", "those", "his", "her", "its", "their", "our", "my", "your", "some", "many", "most", "all", "every", "each", "one"];
 
-fn words(s: &str) -> Vec<String> {
+pub fn words(s: &str) -> Vec<String> {
     s.split(|c: char| !(c.is_alphanumeric() || c == '-' || c == '\''))
         .filter(|w| !w.is_empty())
         .map(|w| w.to_lowercase())
@@ -175,6 +259,15 @@ pub fn build_index(store: &Store, wn: &WordNet) -> Index {
                         if let Some(h) = &h {
                             index.entry(h.clone()).or_default().push((id, Role::Subject));
                         }
+                    }
+                }
+            }
+            Src::Dialog => {
+                let mut seen = std::collections::HashSet::new();
+                for x in words(&it.subj) {
+                    let key = [Pos::N, Pos::V, Pos::A].iter().find_map(|&p| wn.base(&x, p)).unwrap_or(x.clone());
+                    if key.len() >= 2 && seen.insert(key.clone()) {
+                        index.entry(format!("dlg:{key}")).or_default().push((id, Role::DialogPrompt));
                     }
                 }
             }
